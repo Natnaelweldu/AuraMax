@@ -85,6 +85,44 @@ export default function MeshScanner({
   const [hasCalibratedFront, setHasCalibratedFront] = useState(false);
   const [hasCalibratedSide, setHasCalibratedSide] = useState(false);
 
+  // Sidebar tab state
+  const [sidebarTab, setSidebarTab] = useState<"diagnostics" | "profiles">("diagnostics");
+
+  // Non-geometric profile form states
+  const [age, setAge] = useState<number>(21);
+  const [gender, setGender] = useState<string>("male");
+  const [heightCm, setHeightCm] = useState<number>(175);
+  const [weightKg, setWeightKg] = useState<number>(70);
+  const [skinType, setSkinType] = useState<string>("combination");
+  const [activePathologies, setActivePathologies] = useState<string[]>([]);
+  const [scarringTypes, setScarringTypes] = useState<string[]>([]);
+  const [hairTextureType, setHairTextureType] = useState<string>("straight");
+  const [norwoodScaleRating, setNorwoodScaleRating] = useState<number>(1);
+  const [density, setDensity] = useState<string>("medium");
+  const [growthDirection, setGrowthDirection] = useState<string>("forward");
+
+  // Automatically computed body metrics
+  const calculated_bmi = parseFloat((weightKg / Math.pow(heightCm / 100, 2)).toFixed(2)) || 0;
+  const estimated_body_fat_percentage = parseFloat(
+    (gender === "male"
+      ? 1.20 * calculated_bmi + 0.23 * age - 16.2
+      : 1.20 * calculated_bmi + 0.23 * age - 5.4
+    ).toFixed(1)
+  ) || 0;
+
+  // Real deterministic geometric calculation engine
+  const [geoMetrics, setGeoMetrics] = useState({
+    face_shape_classification: "Oval",
+    vertical_thirds_ratio: "1:1.02:0.98",
+    bizygomatic_to_bigonial_ratio: 1.215,
+    canthal_tilt: "positive",
+    asymmetryRawIndex: 4.25,
+    primaryDeviationZone: "balanced",
+    jawAndChinStructuralType: "Defined/Symmetric",
+    forwardHeadPostureAngle: 14.5,
+    forwardHeadPostureClassification: "mild",
+  });
+
   // Front profile landmark points (percentage coordinates on the image)
   const [frontPoints, setFrontPoints] = useState<Point2D[]>([
     { id: "forehead", label: "Forehead Center", x: 50, y: 22, side: "center" },
@@ -143,16 +181,11 @@ export default function MeshScanner({
     return () => clearTimeout(t);
   }, [activeImage, activeTab]);
 
-  // Calculations for front profile metrics (Symmetry scores & ratios)
-  const getFrontMetrics = () => {
-    // If the user hasn't dragged/calibrated yet, default to a realistic baseline asymmetry index
-    // An asymmetry index of 7.11 translates to exactly 6.8/10 symmetry score
-    if (!hasCalibratedFront) {
-      return { faceShape: "Oval", asymmetryIndex: 7.11, tiltAngle: 0.0, jawHeightRatio: 0.611 };
-    }
+  // Trigger metrics update whenever points change
+  useEffect(() => {
+    if (!isMounted) return;
 
     const p = (id: string) => frontPoints.find((pt) => pt.id === id) || frontPoints[0];
-    
     const forehead = p("forehead");
     const nose = p("nose_tip");
     const chin = p("chin_tip");
@@ -165,110 +198,193 @@ export default function MeshScanner({
     const lJaw = p("l_jaw");
     const rJaw = p("r_jaw");
 
+    const getDistance = (ptA: { x: number; y: number }, ptB: { x: number; y: number }) =>
+      Math.sqrt(Math.pow(ptA.x - ptB.x, 2) + Math.pow(ptA.y - ptB.y, 2));
+
     // Face Height & Width
     const faceHeight = Math.abs(chin.y - forehead.y) || 1;
-    const faceWidth = Math.abs(rCheek.x - lCheek.x);
-    const jawWidth = Math.abs(rJaw.x - lJaw.x);
-    const ratio = faceHeight / (faceWidth || 1);
+    const faceWidth = Math.abs(rCheek.x - lCheek.x) || 1;
+    const jawWidth = Math.abs(rJaw.x - lJaw.x) || 1;
+    const ratio = faceHeight / faceWidth;
 
-    // Face Shape categorization based on mathematical ratios
-    let faceShape = "Oval";
-    const jawToCheekRatio = jawWidth / (faceWidth || 1);
+    let face_shape_classification = "Oval";
+    const jawToCheekRatio = jawWidth / faceWidth;
 
     if (ratio < 1.18) {
-      faceShape = "Round";
+      face_shape_classification = "Round";
     } else if (ratio >= 1.18 && ratio < 1.32) {
       if (jawToCheekRatio > 0.88) {
-        faceShape = "Square";
+        face_shape_classification = "Square";
       } else {
-        faceShape = "Heart";
+        face_shape_classification = "Heart";
       }
     } else {
       if (jawToCheekRatio < 0.78) {
-        faceShape = "Diamond";
+        face_shape_classification = "Diamond";
       } else {
-        faceShape = "Oblong";
+        face_shape_classification = "Oblong";
       }
     }
 
-    // Midline x-coords based on regression of central points
+    // 1. vertical_thirds_ratio: Calculate the distances between points [10 to 9], [9 to 2], and [2 to 152].
+    // Glabella is approx 45% down from forehead to nose
+    const glabellaY = forehead.y + (nose.y - forehead.y) * 0.45;
+    const dUpper = glabellaY - forehead.y;
+    const dMiddle = nose.y - glabellaY;
+    const dLower = chin.y - nose.y;
+
+    const r1 = parseFloat((dMiddle / (dUpper || 1)).toFixed(2));
+    const r2 = parseFloat((dLower / (dUpper || 1)).toFixed(2));
+    const vertical_thirds_ratio = `1:${r1}:${r2}`;
+
+    // 2. bizygomatic_to_bigonial_ratio: cheekpoints (234 & 454) vs jaw points (172 & 397)
+    const cheekDist = getDistance(lCheek, rCheek);
+    const jawDist = getDistance(lJaw, rJaw);
+    const bizygomatic_to_bigonial_ratio = parseFloat((cheekDist / (jawDist || 1)).toFixed(3));
+
+    // 3. canthal_tilt: outer canthus and inner canthus
+    const eyeSlope = (rEye.y - lEye.y) / ((rEye.x - lEye.x) || 1);
+    let canthal_tilt = "neutral";
+    if (eyeSlope < -0.01) canthal_tilt = "positive";
+    else if (eyeSlope > 0.01) canthal_tilt = "negative";
+
+    // 4. asymmetry.raw_index: horizontal distance differential relative to midline (168 to 152)
     const midlineX = (forehead.x + nose.x + chin.x) / 3;
+    const getDistToMidline = (pt: { x: number; y: number }) => Math.abs(pt.x - midlineX);
 
-    // Real mathematical coordinate geometry:
-    // 1. Measure horizontal distance of left/right pairs relative to midline
-    const templeLeftDist = Math.abs(midlineX - lTemple.x);
-    const templeRightDist = Math.abs(rTemple.x - midlineX);
-    const eyeLeftDist = Math.abs(midlineX - lEye.x);
-    const eyeRightDist = Math.abs(rEye.x - midlineX);
-    const cheekLeftDist = Math.abs(midlineX - lCheek.x);
-    const cheekRightDist = Math.abs(rCheek.x - midlineX);
-    const jawLeftDist = Math.abs(midlineX - lJaw.x);
-    const jawRightDist = Math.abs(rJaw.x - midlineX);
+    const templeDiff = Math.abs(getDistToMidline(lTemple) - getDistToMidline(rTemple));
+    const eyeDiff = Math.abs(getDistToMidline(lEye) - getDistToMidline(rEye));
+    const cheekDiff = Math.abs(getDistToMidline(lCheek) - getDistToMidline(rCheek));
+    const jawDiff = Math.abs(getDistToMidline(lJaw) - getDistToMidline(rJaw));
+    const asymmetryRawIndex = parseFloat(((templeDiff + eyeDiff + cheekDiff + jawDiff) * 0.75).toFixed(2)) || 2.01;
 
-    // 2. Measure difference in horizontal offsets (asymmetry)
-    const templeDeltaX = Math.abs(templeLeftDist - templeRightDist);
-    const eyeDeltaX = Math.abs(eyeLeftDist - eyeRightDist);
-    const cheekDeltaX = Math.abs(cheekLeftDist - cheekRightDist);
-    const jawDeltaX = Math.abs(jawLeftDist - jawRightDist);
+    // 5. primary_deviation_zone
+    const primaryDeviationZone = Math.abs(getDistToMidline(lJaw) - getDistToMidline(rJaw)) > 1.5 
+      ? "unilateral_masseter_hypertrophy" 
+      : "balanced";
 
-    // 3. Measure vertical height misalignment (should ideally be 0 on a perfectly aligned photo)
-    const templeDeltaY = Math.abs(lTemple.y - rTemple.y);
-    const eyeDeltaY = Math.abs(lEye.y - rEye.y);
-    const cheekDeltaY = Math.abs(lCheek.y - rCheek.y);
-    const jawDeltaY = Math.abs(lJaw.y - rJaw.y);
+    // 6. jaw_and_chin.structural_type
+    const jawAndChinStructuralType = (bizygomatic_to_bigonial_ratio > 1.25) ? "Soft/Recessed" : "Defined/Symmetric";
 
-    // Sum horizontal and vertical deviations weighted for biological significance
-    // (We multiply by a scaling factor to represent typical asymmetry percentages)
-    const rawAsym = (
-      (templeDeltaX + templeDeltaY * 1.5) +
-      (eyeDeltaX * 1.2 + eyeDeltaY * 2.0) +
-      (cheekDeltaX * 1.0 + cheekDeltaY * 1.2) +
-      (jawDeltaX * 1.5 + jawDeltaY * 1.8)
-    ) / 4;
-
-    // Map this raw sum to a hard, highly critical Asymmetry Index out of 15%
-    const asymmetryIndex = Math.min(15.0, Math.max(0.5, parseFloat((rawAsym * 0.95).toFixed(2))));
-
-    // Jaw Width vs Facial Height ratio
-    const jawHeightRatio = jawWidth / faceHeight;
-
-    // Head tilt angle: deviation of nose bridge line relative to absolute vertical axis
-    const dx = nose.x - forehead.x;
-    const dy = nose.y - forehead.y;
-    const tiltAngle = Math.abs(Math.atan2(dx, dy || 1) * (180 / Math.PI));
-
-    return { faceShape, asymmetryIndex, tiltAngle, jawHeightRatio };
-  };
-
-  // Calculations for side profile metrics (Posture angle)
-  const getSideMetrics = () => {
-    // If the user hasn't dragged/calibrated yet, default to a realistic baseline posture angle
-    // A posture angle of 18.0° translates to exactly 68/100 jawline score inside ReportCard (95 - 18 * 1.5 = 68)
-    if (!hasCalibratedSide) {
-      return { postureAngle: 18.0 };
-    }
-
+    // 7. forward_head_posture deviation from absolute vertical
     const tragus = sidePoints.find((pt) => pt.id === "tragus") || sidePoints[0];
     const acromion = sidePoints.find((pt) => pt.id === "acromion") || sidePoints[1];
-
-    // Forward head posture angle calculation: offset from vertical alignment
     const dx = tragus.x - acromion.x;
-    const dy = acromion.y - tragus.y; // invert y because coordinates start top-down
-    
-    // Angle in degrees from the vertical line
-    const angleRad = Math.atan2(Math.abs(dx), Math.abs(dy));
-    const angleDeg = parseFloat((angleRad * (180 / Math.PI)).toFixed(1));
+    const dy = acromion.y - tragus.y;
+    const angleRad = Math.atan2(Math.abs(dx), Math.abs(dy || 1));
+    const forwardHeadPostureAngle = parseFloat((angleRad * (180 / Math.PI)).toFixed(1)) || 14.5;
+    const forwardHeadPostureClassification = forwardHeadPostureAngle > 15.0 ? "moderate_to_severe" : "mild";
 
-    return { postureAngle: angleDeg };
+    setGeoMetrics({
+      face_shape_classification,
+      vertical_thirds_ratio,
+      bizygomatic_to_bigonial_ratio,
+      canthal_tilt,
+      asymmetryRawIndex,
+      primaryDeviationZone,
+      jawAndChinStructuralType,
+      forwardHeadPostureAngle,
+      forwardHeadPostureClassification,
+    });
+
+    onMetricsChanged({
+      faceShape: face_shape_classification,
+      asymmetryIndex: asymmetryRawIndex,
+      postureAngle: forwardHeadPostureAngle,
+      tiltAngle: forwardHeadPostureAngle,
+      jawHeightRatio: jawWidth / faceHeight,
+    });
+  }, [frontPoints, sidePoints, isMounted, hasCalibratedFront, hasCalibratedSide]);
+
+  // Synchronize payload to LocalStorage whenever biometrics or profile details change
+  useEffect(() => {
+    const payload = {
+      user_metadata: {
+        age: Number(age),
+        gender,
+        body_metrics: {
+          height_cm: Number(heightCm),
+          weight_kg: Number(weightKg),
+          calculated_bmi,
+          estimated_body_fat_percentage,
+        },
+      },
+      craniofacial_geometry: {
+        face_shape_classification: geoMetrics.face_shape_classification,
+        asymmetry: {
+          raw_index: geoMetrics.asymmetryRawIndex,
+          primary_deviation_zone: geoMetrics.primaryDeviationZone,
+          canthal_tilt: geoMetrics.canthal_tilt,
+        },
+        jaw_and_chin: {
+          structural_type: geoMetrics.jawAndChinStructuralType,
+          gonial_angle_estimate: Math.round(110 + (geoMetrics.bizygomatic_to_bigonial_ratio * 10)),
+          submental_fat_storage: geoMetrics.bizygomatic_to_bigonial_ratio > 1.3 ? "moderate" : "minimal",
+        },
+        facial_proportions: {
+          vertical_thirds_ratio: geoMetrics.vertical_thirds_ratio,
+          bizygomatic_to_bigonial_ratio: geoMetrics.bizygomatic_to_bigonial_ratio,
+        },
+      },
+      cervicothoracic_posture: {
+        forward_head_posture: {
+          raw_angle_degrees: geoMetrics.forwardHeadPostureAngle,
+          severity_classification: geoMetrics.forwardHeadPostureClassification,
+          cervical_spine_strain_index: parseFloat((geoMetrics.forwardHeadPostureAngle * 1.8).toFixed(1)),
+        },
+        shoulder_girdle: {
+          rounded_shoulders: geoMetrics.forwardHeadPostureAngle > 15 ? "moderate" : "minimal",
+          scapular_protraction: geoMetrics.forwardHeadPostureAngle > 15 ? "moderate" : "minimal",
+        },
+      },
+      dermatology_and_trichology: {
+        skin_profile: {
+          type: skinType,
+          sebum_production: skinType === "oily" ? "high" : skinType === "dry" ? "low" : "moderate",
+          active_pathologies: activePathologies,
+          scarring_type: scarringTypes.length > 0 ? scarringTypes[0] : "none",
+        },
+        hair_profile: {
+          texture_type: hairTextureType,
+          norwood_scale_rating: Number(norwoodScaleRating),
+          density,
+          growth_direction: growthDirection,
+        },
+      },
+    };
+
+    localStorage.setItem("auramax_calibrated_payload", JSON.stringify(payload));
+  }, [
+    age,
+    gender,
+    heightCm,
+    weightKg,
+    calculated_bmi,
+    estimated_body_fat_percentage,
+    skinType,
+    activePathologies,
+    scarringTypes,
+    hairTextureType,
+    norwoodScaleRating,
+    density,
+    growthDirection,
+    geoMetrics,
+  ]);
+
+  const getFrontMetrics = () => {
+    return {
+      faceShape: geoMetrics.face_shape_classification,
+      asymmetryIndex: geoMetrics.asymmetryRawIndex,
+      tiltAngle: geoMetrics.forwardHeadPostureAngle,
+      jawHeightRatio: geoMetrics.bizygomatic_to_bigonial_ratio * 0.5,
+    };
   };
 
-  // Trigger metrics update whenever points change
-  useEffect(() => {
-    if (!isMounted) return;
-    const { faceShape, asymmetryIndex, tiltAngle, jawHeightRatio } = getFrontMetrics();
-    const { postureAngle } = getSideMetrics();
-    onMetricsChanged({ faceShape, asymmetryIndex, postureAngle, tiltAngle, jawHeightRatio });
-  }, [frontPoints, sidePoints, isMounted, hasCalibratedFront, hasCalibratedSide]);
+  const getSideMetrics = () => {
+    return {
+      postureAngle: geoMetrics.forwardHeadPostureAngle,
+    };
+  };
 
   if (!isMounted) {
     return (
@@ -706,161 +822,409 @@ export default function MeshScanner({
       </div>
 
       {/* Metric Calibration Sidebar HUD */}
-      <div className="w-full lg:w-[280px] flex flex-col gap-4">
+      <div className="w-full lg:w-[280px] flex flex-col gap-3">
         
-        {/* ML Status Dashboard */}
-        <div className="bg-zinc-950 p-4 rounded-xl border border-white/[0.08]">
-          <div className="flex items-center gap-2 mb-3">
-            <Brain className="w-4 h-4 text-emerald-400" />
-            <h3 className="font-mono text-xs font-semibold tracking-wider text-zinc-100">
-              CLIENTSIDE_ML_ENGINE
-            </h3>
-          </div>
+        {/* Toggle tabs for sidebar section */}
+        <div className="flex bg-zinc-900/60 p-1 rounded-lg border border-white/[0.08]">
+          <button
+            onClick={() => setSidebarTab("diagnostics")}
+            className={`flex-1 py-1.5 text-[10px] font-mono rounded transition-all uppercase font-semibold ${
+              sidebarTab === "diagnostics"
+                ? "bg-zinc-800 text-emerald-400 border border-white/[0.05]"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Diagnostics
+          </button>
+          <button
+            onClick={() => setSidebarTab("profiles")}
+            className={`flex-1 py-1.5 text-[10px] font-mono rounded transition-all uppercase font-semibold ${
+              sidebarTab === "profiles"
+                ? "bg-zinc-800 text-emerald-400 border border-white/[0.05]"
+                : "text-zinc-500 hover:text-zinc-300"
+            }`}
+          >
+            Biometrics
+          </button>
+        </div>
 
-          <div className="flex items-center justify-between p-2.5 rounded-lg border border-white/[0.04] bg-white/[0.01]">
-            <span className="text-[10px] font-mono text-zinc-400">ENGINE: MEDIAPIPE</span>
-            <div className="flex items-center gap-1.5">
-              <span className={`w-2 h-2 rounded-full ${
-                mlLoadingState === "ready" ? "bg-emerald-400 animate-pulse" :
-                mlLoadingState === "loading" ? "bg-yellow-400 animate-ping" :
-                mlLoadingState === "error" ? "bg-red-400" : "bg-zinc-600"
-              }`} />
-              <span className="text-[10px] font-mono text-zinc-300 uppercase">
-                {mlLoadingState}
+        {sidebarTab === "diagnostics" ? (
+          <div className="flex flex-col gap-4 animate-fadeIn">
+            {/* ML Status Dashboard */}
+            <div className="bg-zinc-950 p-4 rounded-xl border border-white/[0.08]">
+              <div className="flex items-center gap-2 mb-3">
+                <Brain className="w-4 h-4 text-emerald-400" />
+                <h3 className="font-mono text-xs font-semibold tracking-wider text-zinc-100">
+                  CLIENTSIDE_ML_ENGINE
+                </h3>
+              </div>
+
+              <div className="flex items-center justify-between p-2.5 rounded-lg border border-white/[0.04] bg-white/[0.01]">
+                <span className="text-[10px] font-mono text-zinc-400">ENGINE: MEDIAPIPE</span>
+                <div className="flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full ${
+                    mlLoadingState === "ready" ? "bg-emerald-400 animate-pulse" :
+                    mlLoadingState === "loading" ? "bg-yellow-400 animate-ping" :
+                    mlLoadingState === "error" ? "bg-red-400" : "bg-zinc-600"
+                  }`} />
+                  <span className="text-[10px] font-mono text-zinc-300 uppercase">
+                    {mlLoadingState}
+                  </span>
+                </div>
+              </div>
+
+              {mlLoadingState === "error" && (
+                <div className="flex gap-1.5 items-start p-2 mt-2 bg-red-500/5 border border-red-500/20 rounded text-[9px] text-red-400 leading-normal">
+                  <ShieldAlert className="w-3.5 h-3.5 shrink-0 text-red-400" />
+                  <span>
+                    Model download blocked or unsupported. AuraMax activated high-fidelity mathematical fallback.
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Real-time Diagnostics HUD */}
+            <div className="bg-zinc-950 p-4 rounded-xl border border-white/[0.08]">
+              <div className="flex items-center gap-2 mb-3.5">
+                <Crosshair className="w-4 h-4 text-emerald-400" />
+                <h3 className="font-mono text-xs font-semibold tracking-wider text-zinc-100">
+                  REALTIME_TELEMETRY
+                </h3>
+              </div>
+
+              <div className="space-y-4">
+                {/* Front Profile Diagnostic Outputs */}
+                <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
+                  <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1.5">
+                    <span>FACE_SHAPE</span>
+                    <span className="text-emerald-400 font-medium text-right">
+                      {calculatedFront.faceShape.toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
+                    Calculated from vertical facial height vs. lateral zygomatic width ratios.
+                  </p>
+                </div>
+
+                <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
+                  <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
+                    <span>BILATERAL_SYMMETRY</span>
+                    <div className="text-right">
+                      <span className="text-emerald-400 font-medium">{symmetryScore10}/10</span>
+                      <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
+                        {getStatusLabel(symmetryScore10)}
+                      </span>
+                    </div>
+                  </div>
+                  {/* Range indicator bar */}
+                  <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        symmetryScore10 >= 9.0
+                          ? "bg-emerald-400"
+                          : symmetryScore10 >= 7.0
+                          ? "bg-yellow-500"
+                          : "bg-red-500"
+                      }`}
+                      style={{ width: `${symmetryScore10 * 10}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
+                    Asymmetry Index: {calculatedFront.asymmetryIndex}%. Ideal asymmetry deviation is &lt;3.0%.
+                  </p>
+                </div>
+
+                {/* Jawline Frame */}
+                <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
+                  <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
+                    <span>JAWLINE_FRAME</span>
+                    <div className="text-right">
+                      <span className="text-emerald-400 font-medium">{jawlineScore10}/10</span>
+                      <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
+                        {getStatusLabel(jawlineScore10)}
+                      </span>
+                    </div>
+                  </div>
+                  {/* Range indicator bar */}
+                  <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        jawlineScore10 >= 9.0
+                          ? "bg-emerald-400"
+                          : jawlineScore10 >= 7.0
+                          ? "bg-yellow-500"
+                          : "bg-red-500"
+                      }`}
+                      style={{ width: `${jawlineScore10 * 10}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
+                    Jaw/Height Ratio: {calculatedFront.jawHeightRatio.toFixed(3)}. Target golden proportion is ~0.650.
+                  </p>
+                </div>
+
+                {/* Forward Posture / Head Tilt */}
+                <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
+                  <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
+                    <span>FORWARD_POSTURE_TILT</span>
+                    <div className="text-right">
+                      <span className="text-emerald-400 font-medium">{postureScore10}/10</span>
+                      <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
+                        {getStatusLabel(postureScore10)}
+                      </span>
+                    </div>
+                  </div>
+                  {/* Range indicator bar */}
+                  <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        postureScore10 >= 9.0
+                          ? "bg-emerald-400"
+                          : postureScore10 >= 7.0
+                          ? "bg-yellow-500"
+                          : "bg-red-500"
+                      }`}
+                      style={{ width: `${postureScore10 * 10}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
+                    Nose bridge tilt: {calculatedFront.tiltAngle.toFixed(1)}°. Lateral spinal angle: {calculatedSide.postureAngle.toFixed(1)}°.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Tip/Info Box */}
+            <div className="bg-[#050505] p-3.5 rounded-lg border border-white/[0.04]">
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/20 inline-block mb-2">
+                CALIBRATION_MANUAL
               </span>
-            </div>
-          </div>
-
-          {mlLoadingState === "error" && (
-            <div className="flex gap-1.5 items-start p-2 mt-2 bg-red-500/5 border border-red-500/20 rounded text-[9px] text-red-400 leading-normal">
-              <ShieldAlert className="w-3.5 h-3.5 shrink-0 text-red-400" />
-              <span>
-                Model download blocked or unsupported. AuraMax activated high-fidelity mathematical fallback.
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Real-time Diagnostics HUD */}
-        <div className="bg-zinc-950 p-4 rounded-xl border border-white/[0.08]">
-          <div className="flex items-center gap-2 mb-3.5">
-            <Crosshair className="w-4 h-4 text-emerald-400" />
-            <h3 className="font-mono text-xs font-semibold tracking-wider text-zinc-100">
-              REALTIME_TELEMETRY
-            </h3>
-          </div>
-
-          <div className="space-y-4">
-            {/* Front Profile Diagnostic Outputs */}
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
-              <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1.5">
-                <span>FACE_SHAPE</span>
-                <span className="text-emerald-400 font-medium text-right">
-                  {calculatedFront.faceShape.toUpperCase()}
-                </span>
-              </div>
-              <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                Calculated from vertical facial height vs. lateral zygomatic width ratios.
-              </p>
-            </div>
-
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
-              <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
-                <span>BILATERAL_SYMMETRY</span>
-                <div className="text-right">
-                  <span className="text-emerald-400 font-medium">{symmetryScore10}/10</span>
-                  <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
-                    {getStatusLabel(symmetryScore10)}
-                  </span>
-                </div>
-              </div>
-              {/* Range indicator bar */}
-              <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    symmetryScore10 >= 9.0
-                      ? "bg-emerald-400"
-                      : symmetryScore10 >= 7.0
-                      ? "bg-yellow-500"
-                      : "bg-red-500"
-                  }`}
-                  style={{ width: `${symmetryScore10 * 10}%` }}
-                />
-              </div>
-              <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                Asymmetry Index: {calculatedFront.asymmetryIndex}%. Ideal asymmetry deviation is &lt;3.0%.
-              </p>
-            </div>
-
-            {/* Jawline Frame */}
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
-              <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
-                <span>JAWLINE_FRAME</span>
-                <div className="text-right">
-                  <span className="text-emerald-400 font-medium">{jawlineScore10}/10</span>
-                  <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
-                    {getStatusLabel(jawlineScore10)}
-                  </span>
-                </div>
-              </div>
-              {/* Range indicator bar */}
-              <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    jawlineScore10 >= 9.0
-                      ? "bg-emerald-400"
-                      : jawlineScore10 >= 7.0
-                      ? "bg-yellow-500"
-                      : "bg-red-500"
-                  }`}
-                  style={{ width: `${jawlineScore10 * 10}%` }}
-                />
-              </div>
-              <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                Jaw/Height Ratio: {calculatedFront.jawHeightRatio.toFixed(3)}. Target golden proportion is ~0.650.
-              </p>
-            </div>
-
-            {/* Forward Posture / Head Tilt */}
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
-              <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
-                <span>FORWARD_POSTURE_TILT</span>
-                <div className="text-right">
-                  <span className="text-emerald-400 font-medium">{postureScore10}/10</span>
-                  <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
-                    {getStatusLabel(postureScore10)}
-                  </span>
-                </div>
-              </div>
-              {/* Range indicator bar */}
-              <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
-                <div
-                  className={`h-full rounded-full transition-all duration-300 ${
-                    postureScore10 >= 9.0
-                      ? "bg-emerald-400"
-                      : postureScore10 >= 7.0
-                      ? "bg-yellow-500"
-                      : "bg-red-500"
-                  }`}
-                  style={{ width: `${postureScore10 * 10}%` }}
-                />
-              </div>
-              <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                Nose bridge tilt: {calculatedFront.tiltAngle.toFixed(1)}°. Lateral spinal angle: {calculatedSide.postureAngle.toFixed(1)}°.
+              <p className="text-[10px] leading-relaxed text-zinc-500 font-sans">
+                To fine-tune geometric calculations, drag the glowing green alignment nodes to match key structural vertices on your uploaded photography.
               </p>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex flex-col gap-4 animate-fadeIn max-h-[580px] overflow-y-auto pr-1 select-none">
+            
+            {/* User Metadata & Body Metrics */}
+            <div className="bg-zinc-950 p-4 rounded-xl border border-white/[0.08]">
+              <h3 className="font-mono text-[11px] font-semibold tracking-wider text-zinc-200 mb-3 border-b border-white/[0.05] pb-1.5">
+                I. USER_METADATA_BODY_METRICS
+              </h3>
+              
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Age</label>
+                    <input
+                      type="number"
+                      value={age}
+                      onChange={(e) => setAge(Math.max(1, Number(e.target.value)))}
+                      className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Gender</label>
+                    <select
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                      className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                    >
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="other">Other</option>
+                    </select>
+                  </div>
+                </div>
 
-        {/* Tip/Info Box */}
-        <div className="bg-[#050505] p-3.5 rounded-lg border border-white/[0.04]">
-          <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/5 px-2 py-0.5 rounded border border-emerald-500/20 inline-block mb-2">
-            CALIBRATION_MANUAL
-          </span>
-          <p className="text-[10px] leading-relaxed text-zinc-500 font-sans">
-            To fine-tune geometric calculations, drag the glowing green alignment nodes to match key structural vertices on your uploaded photography.
-          </p>
-        </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Height (cm)</label>
+                    <input
+                      type="number"
+                      value={heightCm}
+                      onChange={(e) => setHeightCm(Math.max(1, Number(e.target.value)))}
+                      className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Weight (kg)</label>
+                    <input
+                      type="number"
+                      value={weightKg}
+                      onChange={(e) => setWeightKg(Math.max(1, Number(e.target.value)))}
+                      className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                    />
+                  </div>
+                </div>
+
+                {/* Auto Calculated Outputs */}
+                <div className="mt-3 p-2.5 bg-emerald-500/[0.02] border border-emerald-500/10 rounded-lg space-y-1.5">
+                  <div className="flex justify-between items-center text-[10px] font-mono">
+                    <span className="text-zinc-500">CALCULATED_BMI:</span>
+                    <span className="text-emerald-400 font-semibold">{calculated_bmi}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-[10px] font-mono">
+                    <span className="text-zinc-500">EST_BODY_FAT:</span>
+                    <span className="text-emerald-400 font-semibold">{estimated_body_fat_percentage}%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Dermatology Profile */}
+            <div className="bg-zinc-950 p-4 rounded-xl border border-white/[0.08]">
+              <h3 className="font-mono text-[11px] font-semibold tracking-wider text-zinc-200 mb-3 border-b border-white/[0.05] pb-1.5">
+                II. DERMATOLOGY_PROFILE
+              </h3>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Skin Type</label>
+                  <select
+                    value={skinType}
+                    onChange={(e) => setSkinType(e.target.value)}
+                    className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                  >
+                    <option value="combination">Combination</option>
+                    <option value="dry">Dry</option>
+                    <option value="oily">Oily</option>
+                    <option value="normal">Normal</option>
+                    <option value="congested">Congested</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1.5">Active Pathologies</label>
+                  <div className="space-y-1.5 max-h-[100px] overflow-y-auto pr-1">
+                    {[
+                      { id: "inflammatory_acne", label: "Inflammatory Acne" },
+                      { id: "comedones", label: "Comedones" },
+                      { id: "rosacea", label: "Rosacea" },
+                      { id: "seborrheic_dermatitis", label: "Seborrheic Dermatitis" },
+                    ].map((item) => {
+                      const isChecked = activePathologies.includes(item.id);
+                      return (
+                        <label key={item.id} className="flex items-center gap-2 cursor-pointer text-[10px] text-zinc-400 hover:text-zinc-200 font-sans">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              if (isChecked) {
+                                setActivePathologies(activePathologies.filter((id) => id !== item.id));
+                              } else {
+                                setActivePathologies([...activePathologies, item.id]);
+                              }
+                            }}
+                            className="w-3.5 h-3.5 rounded border-white/10 bg-zinc-900 text-emerald-500 focus:ring-0 focus:ring-offset-0"
+                          />
+                          {item.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1.5">Scarring Types</label>
+                  <div className="space-y-1.5 max-h-[100px] overflow-y-auto pr-1">
+                    {[
+                      { id: "shallow_rolling_scars", label: "Shallow Rolling Scars" },
+                      { id: "post_inflammatory_hyperpigmentation", label: "Post-Inflammatory Hyperpigmentation" },
+                      { id: "boxcar_scars", label: "Boxcar Scars" },
+                      { id: "icepick_scars", label: "Icepick Scars" },
+                    ].map((item) => {
+                      const isChecked = scarringTypes.includes(item.id);
+                      return (
+                        <label key={item.id} className="flex items-center gap-2 cursor-pointer text-[10px] text-zinc-400 hover:text-zinc-200 font-sans">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              if (isChecked) {
+                                setScarringTypes(scarringTypes.filter((id) => id !== item.id));
+                              } else {
+                                setScarringTypes([...scarringTypes, item.id]);
+                              }
+                            }}
+                            className="w-3.5 h-3.5 rounded border-white/10 bg-zinc-900 text-emerald-500 focus:ring-0 focus:ring-offset-0"
+                          />
+                          {item.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Trichology Profile */}
+            <div className="bg-zinc-950 p-4 rounded-xl border border-white/[0.08] mb-2">
+              <h3 className="font-mono text-[11px] font-semibold tracking-wider text-zinc-200 mb-3 border-b border-white/[0.05] pb-1.5">
+                III. TRICHOLOGY_PROFILE
+              </h3>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Hair Texture</label>
+                  <select
+                    value={hairTextureType}
+                    onChange={(e) => setHairTextureType(e.target.value)}
+                    className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                  >
+                    <option value="straight">Straight (1A-1C)</option>
+                    <option value="wavy">Wavy (2A-2C)</option>
+                    <option value="curly">Curly (3A-3C)</option>
+                    <option value="coily">Coily (4A-4C)</option>
+                    <option value="4C">4C Textured</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Norwood Scale Rating</label>
+                  <select
+                    value={norwoodScaleRating}
+                    onChange={(e) => setNorwoodScaleRating(Number(e.target.value))}
+                    className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7].map((num) => (
+                      <option key={num} value={num}>Class {num}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Density</label>
+                  <select
+                    value={density}
+                    onChange={(e) => setDensity(e.target.value)}
+                    className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                  >
+                    <option value="low">Low Density</option>
+                    <option value="medium">Medium Density</option>
+                    <option value="high">High Density</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-mono text-zinc-500 uppercase mb-1">Growth Direction</label>
+                  <select
+                    value={growthDirection}
+                    onChange={(e) => setGrowthDirection(e.target.value)}
+                    className="w-full bg-zinc-900 border border-white/[0.08] rounded px-2 py-1 text-xs font-mono text-zinc-200 focus:outline-none focus:border-emerald-500/40"
+                  >
+                    <option value="forward">Forward</option>
+                    <option value="backward">Backward</option>
+                    <option value="vortex">Vortex</option>
+                    <option value="crown">Crown/Spiral</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
 
       </div>
     </div>

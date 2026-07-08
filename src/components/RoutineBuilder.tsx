@@ -4,24 +4,24 @@ import { fetchAuraRecommendations } from "../lib/services/apiService";
 import { dbEngine } from "../lib/db";
 
 interface Routine {
-  kinesiology: Array<{
-    exerciseName: string;
+  structuralKinesiology: Array<{
+    title: string;
     description: string;
     frequency: string;
-    repsSets: string;
-    targetPostureAngle: string;
+    volume: string;
+    targetMetrics: string;
   }>;
-  topicalActives: Array<{
-    ingredient: string;
+  dermBiochemistry: Array<{
+    title: string;
     purpose: string;
-    applicationFrequency: string;
-    scientificJustification: string;
+    applicationInstructions: string;
+    scientificNotes: string;
   }>;
-  groomingStyle: {
+  geometricGrooming: {
     haircutSuggestion: string;
-    facialHairSuggestion: string;
-    eyebrowShaping: string;
-    reasoning: string;
+    facialHairGeometry: string;
+    eyebrowSymmetryMap: string;
+    aestheticJustification: string;
   };
   lifestyleDirectives: string[];
 }
@@ -192,25 +192,101 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
     setErrorMsg(null);
 
     try {
-      const calculatedSymmetryScore = Math.round(Math.max(35, 100 - asymmetryIndex * 4.5));
+      // 1. HARVEST REAL STATE: Retrieve the calibrated payload from LocalStorage
+      const savedPayload = typeof window !== "undefined" ? window.localStorage.getItem("auramax_calibrated_payload") : null;
+      let payload: any = null;
+
+      if (savedPayload) {
+        try {
+          payload = JSON.parse(savedPayload);
+        } catch (e) {
+          console.warn("Failed to parse cached payload from localStorage", e);
+        }
+      }
+
+      if (!payload) {
+        // Pristine fallback schema conforming exactly to structural requirements
+        payload = {
+          user_metadata: {
+            age: age,
+            gender: "male",
+            body_metrics: {
+              height_cm: 175,
+              weight_kg: 70,
+              calculated_bmi: 22.86,
+              estimated_body_fat_percentage: 16.2
+            }
+          },
+          craniofacial_geometry: {
+            face_shape_classification: faceShape || "Oval",
+            asymmetry: {
+              raw_index: asymmetryIndex || 4.25,
+              primary_deviation_zone: "balanced",
+              canthal_tilt: "positive"
+            },
+            jaw_and_chin: {
+              structural_type: "Defined/Symmetric",
+              gonial_angle_estimate: 122,
+              submental_fat_storage: "minimal"
+            },
+            facial_proportions: {
+              vertical_thirds_ratio: "1:1.02:0.98",
+              bizygomatic_to_bigonial_ratio: 1.215
+            }
+          },
+          cervicothoracic_posture: {
+            forward_head_posture: {
+              raw_angle_degrees: postureAngle || 14.5,
+              severity_classification: "mild",
+              cervical_spine_strain_index: 26.1
+            },
+            shoulder_girdle: {
+              rounded_shoulders: "minimal",
+              scapular_protraction: "minimal"
+            }
+          },
+          dermatology_and_trichology: {
+            skin_profile: {
+              type: skinCondition || "combination",
+              sebum_production: "moderate",
+              active_pathologies: [],
+              scarring_type: "none"
+            },
+            hair_profile: {
+              texture_type: hairTexture || "straight",
+              norwood_scale_rating: 1,
+              density: "medium",
+              growth_direction: "forward"
+            }
+          }
+        };
+      }
       
-      // 1. FRONTEND SERVICE LAYER: POST to /api/recommendations
-      const data = await fetchAuraRecommendations({
-        faceShape,
-        symmetryScore: calculatedSymmetryScore,
-        forwardHeadAngle: postureAngle,
-        hairTexture,
-        age,
-        skinCondition,
-        groomingStyle,
+      // 2. ACTIVE FETCH PIPELINE: POST request to /api/recommendations passing complete metrics payload as JSON string
+      const response = await fetch("/api/recommendations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       });
+
+      if (!response.ok) {
+        throw new Error(`AuraMax core response failed with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (!data || !data.routine) {
+        throw new Error("Invalid routine response received from AuraMax biometric engine.");
+      }
 
       // 3. DATA PERSISTENCE BINDING: Save recommendations and raw parameters inside IndexedDB via Dexie
       await dbEngine.metricsRecords.put({
         id: "latest",
         timestamp: Date.now(),
         faceShape,
-        symmetryScore: calculatedSymmetryScore,
+        symmetryScore: Math.round(subscores.symmetry * 10),
         forwardHeadAngle: postureAngle,
         hairTexture,
         age,
@@ -317,11 +393,11 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
                   <span className="font-mono text-[11px] font-semibold tracking-wider text-emerald-400">
                     I. STRUCTURAL_KINESIOLOGY
                   </span>
-                  <span className="text-[9px] font-mono text-zinc-500">EXERCISES: {routine.kinesiology?.length || 0}</span>
+                  <span className="text-[9px] font-mono text-zinc-500">EXERCISES: {routine.structuralKinesiology?.length || 0}</span>
                 </div>
 
                 <div className="space-y-4">
-                  {routine.kinesiology?.map((ex, idx) => {
+                  {routine.structuralKinesiology?.map((ex, idx) => {
                     const id = `ex-${idx}`;
                     const checked = routineChecks.includes(id);
                     return (
@@ -344,7 +420,7 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
                           </button>
                           <div>
                             <h4 className={`text-xs font-mono font-medium ${checked ? "line-through text-zinc-500" : "text-zinc-200"}`}>
-                              {ex.exerciseName}
+                              {ex.title}
                             </h4>
                             <p className="text-[10px] text-zinc-500 mt-1 font-sans leading-relaxed">
                               {ex.description}
@@ -352,10 +428,10 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
                             <div className="flex gap-2.5 mt-2 text-[9px] font-mono text-zinc-400 bg-white/[0.02] px-2 py-0.5 rounded border border-white/[0.03] w-max">
                               <span>FREQ: {ex.frequency}</span>
                               <span>•</span>
-                              <span>VOL: {ex.repsSets}</span>
+                              <span>VOL: {ex.volume}</span>
                             </div>
                             <p className="text-[9px] text-emerald-400/70 font-mono mt-1.5 leading-tight">
-                              {ex.targetPostureAngle}
+                              {ex.targetMetrics}
                             </p>
                           </div>
                         </div>
@@ -373,11 +449,11 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
                   <span className="font-mono text-[11px] font-semibold tracking-wider text-emerald-400">
                     II. DERM_BIOCHEMISTRY
                   </span>
-                  <span className="text-[9px] font-mono text-zinc-500">ACTIVES: {routine.topicalActives?.length || 0}</span>
+                  <span className="text-[9px] font-mono text-zinc-500">ACTIVES: {routine.dermBiochemistry?.length || 0}</span>
                 </div>
 
                 <div className="space-y-4">
-                  {routine.topicalActives?.map((act, idx) => {
+                  {routine.dermBiochemistry?.map((act, idx) => {
                     const id = `act-${idx}`;
                     const checked = routineChecks.includes(id);
                     return (
@@ -400,16 +476,16 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
                           </button>
                           <div>
                             <h4 className={`text-xs font-mono font-medium ${checked ? "line-through text-zinc-500" : "text-zinc-200"}`}>
-                              {act.ingredient}
+                              {act.title}
                             </h4>
                             <p className="text-[10px] text-zinc-500 mt-1 font-sans leading-relaxed">
                               {act.purpose}
                             </p>
                             <div className="flex gap-2.5 mt-2 text-[9px] font-mono text-zinc-400 bg-white/[0.02] px-2 py-0.5 rounded border border-white/[0.03] w-max">
-                              <span>APPLICATION: {act.applicationFrequency}</span>
+                              <span>APPLICATION: {act.applicationInstructions}</span>
                             </div>
                             <p className="text-[9px] text-zinc-500 font-sans mt-2 italic leading-snug border-l border-zinc-700 pl-2">
-                              &quot;{act.scientificJustification}&quot;
+                              &quot;{act.scientificNotes}&quot;
                             </p>
                           </div>
                         </div>
@@ -434,27 +510,27 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
                   <div className="p-3.5 bg-black/40 rounded-lg border border-white/[0.04]">
                     <span className="text-[9px] font-mono text-emerald-400 block mb-1">HAIRCUT_SUGGESTION</span>
                     <h5 className="text-xs font-mono text-zinc-200 font-medium mb-1">
-                      {routine.groomingStyle?.haircutSuggestion}
+                      {routine.geometricGrooming?.haircutSuggestion}
                     </h5>
                   </div>
 
                   <div className="p-3.5 bg-black/40 rounded-lg border border-white/[0.04]">
                     <span className="text-[9px] font-mono text-emerald-400 block mb-1">FACIAL_HAIR_GEOMETRY</span>
                     <h5 className="text-xs font-mono text-zinc-200 font-medium mb-1">
-                      {routine.groomingStyle?.facialHairSuggestion}
+                      {routine.geometricGrooming?.facialHairGeometry}
                     </h5>
                   </div>
 
                   <div className="p-3.5 bg-black/40 rounded-lg border border-white/[0.04]">
                     <span className="text-[9px] font-mono text-emerald-400 block mb-1">EYEBROW_SYMMETRY_MAP</span>
                     <h5 className="text-xs font-mono text-zinc-200 font-medium mb-1">
-                      {routine.groomingStyle?.eyebrowShaping}
+                      {routine.geometricGrooming?.eyebrowSymmetryMap}
                     </h5>
                   </div>
 
                   <p className="text-[10px] text-zinc-500 leading-relaxed font-sans bg-white/[0.01] p-3 rounded border border-white/[0.02]">
                     <span className="font-mono text-[9px] text-zinc-400 block mb-1">AESTHETIC_JUSTIFICATION</span>
-                    {routine.groomingStyle?.reasoning}
+                    {routine.geometricGrooming?.aestheticJustification}
                   </p>
                 </div>
               </div>

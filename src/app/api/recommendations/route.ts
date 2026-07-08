@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
 
 export async function POST(request: Request) {
-  // Define fallback logic at the top so it's accessible in both primary fallback and catch-block failure states.
+  // Define fallback variables at the top level
   let faceShape = "Oval";
   let symmetryScore = 85;
   let forwardHeadAngle = 14.5;
@@ -24,53 +24,53 @@ export async function POST(request: Request) {
     return {
       source: sourceLabel,
       routine: {
-        kinesiology: [
+        structuralKinesiology: [
           {
-            exerciseName: "Cervical Retraction (Chin Tucks)",
+            title: "Cervical Retraction (Chin Tucks)",
             description: "Pull your head straight back, keeping eyes level, like making a double chin. Hold 5s.",
             frequency: "Daily",
-            repsSets: "3 sets of 10 reps",
-            targetPostureAngle: `< 12° (Current: ${forwardHeadAngle}°)`,
+            volume: "3 sets of 10 reps",
+            targetMetrics: `< 12° (Current Forward Tilt: ${forwardHeadAngle}°)`,
           },
           {
-            exerciseName: "Suboccipital Release Stretch",
+            title: "Suboccipital Release Stretch",
             description: "Gently tuck chin and pull the base of the skull upward to release deep cervical extensors.",
             frequency: "Twice daily",
-            repsSets: "4 holds of 20 seconds",
-            targetPostureAngle: `< 12° (Current: ${forwardHeadAngle}°)`,
+            volume: "4 holds of 20 seconds",
+            targetMetrics: `< 12° (Current Forward Tilt: ${forwardHeadAngle}°)`,
           },
           {
-            exerciseName: "Symmetric Masseter Massage & Release",
+            title: "Symmetric Masseter Massage & Release",
             description: "Apply firm circular pressure to masseter muscles on both sides to release unilateral biting tension.",
             frequency: "Daily, before rest",
-            repsSets: "2 minutes per side",
-            targetPostureAngle: `Symmetry Target: > 92% (Current: ${symmetryScore}%)`,
+            volume: "2 minutes per side",
+            targetMetrics: `Symmetry Target: > 92% (Current symmetry: ${symmetryScore}%)`,
           },
         ],
-        topicalActives: [
+        dermBiochemistry: [
           {
-            ingredient: skinCondition === "oily" ? "Salicylic Acid (BHA) 2%" : "Niacinamide 5%",
+            title: skinCondition === "oily" ? "Salicylic Acid (BHA) 2%" : "Niacinamide 5%",
             purpose: skinCondition === "oily" ? "Deep follicular sebum control and pore clearing" : "Barrier support and sebum stabilization",
-            applicationFrequency: "PM, every other night",
-            scientificJustification: `Regulates lipid production optimized for ${skinCondition} skin profiles.`,
+            applicationInstructions: "PM, every other night",
+            scientificNotes: `Regulates lipid production optimized for ${skinCondition} skin profiles.`,
           },
           {
-            ingredient: "Hyaluronic Acid & Ceramide NP Complex",
+            title: "Hyaluronic Acid & Ceramide NP Complex",
             purpose: "Transepidermal water loss reduction",
-            applicationFrequency: "AM/PM daily",
-            scientificJustification: "Maintains optimal stratum corneum hydration to support cellular turnover.",
+            applicationInstructions: "AM/PM daily",
+            scientificNotes: "Maintains optimal stratum corneum hydration to support cellular turnover.",
           },
         ],
-        groomingStyle: {
+        geometricGrooming: {
           haircutSuggestion: haircut,
-          facialHairSuggestion: groomingStyle === "clean-shaven"
+          facialHairGeometry: groomingStyle === "clean-shaven"
             ? "Slick, clean-shaven definition with straight lines across cheeks"
             : "Structured low-cheek stubble to contour jaw symmetry",
-          eyebrowShaping: "Neat horizontal shape with subtle arch tapering",
-          reasoning: `Structured to complement a ${faceShape} shape and maximize facial harmony.`,
+          eyebrowSymmetryMap: "Neat horizontal shape with subtle arch tapering",
+          aestheticJustification: `Structured to complement a ${faceShape} shape and maximize facial harmony.`,
         },
         lifestyleDirectives: [
-          `Maintain monitor height at direct eye level to decrease cervical load from ${forwardHeadAngle}°`,
+          `Maintain monitor height at direct eye level to decrease cervical load from current ${forwardHeadAngle}°`,
           "Sleep on an ergonomic contoured pillow to prevent unilateral facial compression",
           "Perform symmetric chewing exercises to balance jaw masseter muscle hypertrophy",
         ],
@@ -79,7 +79,7 @@ export async function POST(request: Request) {
   };
 
   try {
-    // 1. PARAMETER FALLBACKS: Robust extraction from incoming JSON body
+    // 1. PARAMETER INGESTION: Parse the incoming JSON body to extract specific metrics
     let body: any = {};
     try {
       body = await request.json();
@@ -87,24 +87,57 @@ export async function POST(request: Request) {
       console.warn("Unable to parse request body JSON, using defaults.");
     }
 
-    // Assign fallback values if parameters are missing, null, or empty
-    faceShape = body?.faceShape || "Oval";
-    symmetryScore = typeof body?.symmetryScore === "number" ? body.symmetryScore : 85;
-    forwardHeadAngle = typeof body?.forwardHeadAngle === "number" ? body.forwardHeadAngle : 14.5;
-    hairTexture = body?.hairTexture || "straight"; // Default to straight as requested
-    age = typeof body?.age === "number" ? body.age : 21; // Default to 21 as requested
-    skinCondition = body?.skinCondition || "combination";
+    // Try to extract from the nested high-fidelity structure first:
+    const userMetadata = body?.user_metadata || {};
+    const craniofacial = body?.craniofacial_geometry || {};
+    const posture = body?.cervicothoracic_posture || {};
+    const dermTrich = body?.dermatology_and_trichology || {};
+
+    faceShape = craniofacial.face_shape_classification || body?.faceShape || "Oval";
+    
+    // Support either old style symmetryScore or new style bilateralSymmetry (1-10)
+    symmetryScore = typeof body?.bilateralSymmetry === "number" 
+      ? Math.round(body.bilateralSymmetry * 10) 
+      : (typeof craniofacial.asymmetry?.raw_index === "number" 
+         ? Math.round((10 - craniofacial.asymmetry.raw_index * 0.45) * 10)
+         : (typeof body?.symmetryScore === "number" ? body.symmetryScore : 85));
+
+    const asymmetryRaw = typeof craniofacial.asymmetry?.raw_index === "number"
+      ? craniofacial.asymmetry.raw_index
+      : (typeof body?.asymmetryIndex === "number" ? body.asymmetryIndex : 4.25);
+    
+    // Support either old style forwardHeadAngle or new style forwardPosture (1-10) score
+    if (typeof body?.forwardHeadAngle === "number") {
+      forwardHeadAngle = body.forwardHeadAngle;
+    } else if (typeof posture.forward_head_posture?.raw_angle_degrees === "number") {
+      forwardHeadAngle = posture.forward_head_posture.raw_angle_degrees;
+    } else if (typeof body?.forwardPosture === "number") {
+      forwardHeadAngle = parseFloat((12.0 + (10.0 - body.forwardPosture) * 2.0).toFixed(1));
+    } else {
+      forwardHeadAngle = 14.5;
+    }
+
+    hairTexture = dermTrich.hair_profile?.texture_type || body?.hairTexture || "straight";
+    age = typeof userMetadata.age === "number" ? userMetadata.age : (typeof body?.age === "number" ? body.age : 21);
+    skinCondition = dermTrich.skin_profile?.type || body?.skinType || body?.skinCondition || "combination";
     groomingStyle = body?.groomingStyle || "stubble";
+
+    // Extra subscores from the active dashboard state payload
+    const jawlineFrame = typeof body?.jawlineFrame === "number" ? body.jawlineFrame : 8.0;
+    const bilateralSymmetry = typeof body?.bilateralSymmetry === "number" ? body.bilateralSymmetry : 8.5;
+    const forwardPosture = typeof body?.forwardPosture === "number" ? body.forwardPosture : 8.0;
+    const skinHealth = typeof body?.skinHealth === "number" ? body.skinHealth : 8.0;
+    const groomStyling = typeof body?.groomStyling === "number" ? body.groomStyling : 8.2;
 
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // 2. HARDENED FAILSAFE: Intercept missing API key and return static fallback instantly with 200 OK
+    // 2. HARDENED FAILSAFE: Return structured fallback instantly if API key is not defined
     if (!apiKey) {
-      console.warn("GEMINI_API_KEY is not defined. Returning structured static fallback routine.");
+      console.warn("GEMINI_API_KEY is not defined. Returning offline mode structured fallback routine.");
       return NextResponse.json(getFallbackRoutine("AuraMax Static Calibration Engine (Offline Mode)"));
     }
 
-    // Lazy initialize GoogleGenAI client with correct headers
+    // Lazy initialize the Gemini client with appropriate headers
     const ai = new GoogleGenAI({
       apiKey,
       httpOptions: {
@@ -114,18 +147,55 @@ export async function POST(request: Request) {
       },
     });
 
+    // 3. STRUCTURED GEMINI PROMPT: Formulate a specialized prompt with live biometrics
     const prompt = `You are the AuraMax Bio-Aesthetic Core AI.
-    Calculate a hyper-customized facial aesthetics, skin, hair, and posture routine based on these biometrics:
-    - Face Shape: ${faceShape}
-    - Facial Symmetry Score: ${symmetryScore}% (Asymmetry Index is calculated from this)
-    - Forward Head Angle: ${forwardHeadAngle}° (Target is < 12°)
-    - Hair Texture: ${hairTexture}
+    Calculate a hyper-customized facial aesthetics, skin, hair, and posture routine based on these specific high-fidelity biometric inputs:
+    
+    [USER PROFILE]
     - Age: ${age}
-    - Skin Condition: ${skinCondition}
-    - Current Grooming Style: ${groomingStyle}
+    - Gender: ${userMetadata.gender || "male"}
+    - Height: ${userMetadata.body_metrics?.height_cm || 175} cm
+    - Weight: ${userMetadata.body_metrics?.weight_kg || 70} kg
+    - BMI: ${userMetadata.body_metrics?.calculated_bmi || 22.8}
+    - Body Fat Percentage: ${userMetadata.body_metrics?.estimated_body_fat_percentage || 16}%
 
-    Return a highly sophisticated, scientifically justified routine in JSON. Make the scientific justifications extremely detailed and tailored. Ensure it exactly matches the requested JSON schema.`;
+    [CRANIOFACIAL GEOMETRY]
+    - Face Shape: ${faceShape}
+    - Bilateral Asymmetry Index: ${asymmetryRaw}% (Deviation from center midline)
+    - Primary Deviation Zone: ${craniofacial.asymmetry?.primary_deviation_zone || "balanced"}
+    - Canthal Tilt: ${craniofacial.asymmetry?.canthal_tilt || "positive"}
+    - Jaw & Chin Structural Type: ${craniofacial.jaw_and_chin?.structural_type || "Defined/Symmetric"}
+    - Gonial Angle Estimate: ${craniofacial.jaw_and_chin?.gonial_angle_estimate || 122}°
+    - Submental Fat Storage: ${craniofacial.jaw_and_chin?.submental_fat_storage || "minimal"}
+    - Vertical Thirds Proportion Ratio: ${craniofacial.facial_proportions?.vertical_thirds_ratio || "1:1.0:1.0"}
+    - Bizygomatic-to-Bigonial Width Ratio: ${craniofacial.facial_proportions?.bizygomatic_to_bigonial_ratio || 1.2}
 
+    [POSTURE ANALYSIS]
+    - Forward Head Posture Angle: ${forwardHeadAngle}° (Normal is <12°, forward angle increases strain)
+    - Posture Severity Classification: ${posture.forward_head_posture?.severity_classification || "mild"}
+    - Cervical Spine Strain Index: ${posture.forward_head_posture?.cervical_spine_strain_index || 25} lbs equivalent
+    - Shoulder Girdle Roundedness: ${posture.shoulder_girdle?.rounded_shoulders || "minimal"}
+    - Scapular Protraction: ${posture.shoulder_girdle?.scapular_protraction || "minimal"}
+
+    [DERMATOLOGY & TRICHOLOGY]
+    - Skin Profile Type: ${skinCondition}
+    - Sebum Production Level: ${typeof dermTrich.skin_profile?.sebum_production === "string" ? dermTrich.skin_profile.sebum_production : "moderate"}
+    - Active Pathologies: ${JSON.stringify(dermTrich.skin_profile?.active_pathologies || [])}
+    - Scarring Type: ${dermTrich.skin_profile?.scarring_type || "none"}
+    - Hair Texture Type: ${hairTexture}
+    - Norwood Hair Loss Scale: Class ${dermTrich.hair_profile?.norwood_scale_rating || 1}
+    - Hair Follicular Density: ${dermTrich.hair_profile?.density || "medium"}
+    - Growth/Spiral Direction: ${dermTrich.hair_profile?.growth_direction || "forward"}
+
+    Analyze this data with clinical precision and generate a targeted 4-part routine:
+    1. structuralKinesiology (cervicothoracic posture corrections, jaw kinesiotherapy, mastication adjustments based on asymmetry and cervical strain).
+    2. dermBiochemistry (custom topical chemical actives, application timings, and bio-mechanisms for skin type, pathologies, and scarring).
+    3. geometricGrooming (exact haircut and beard/facial hair lines tailored to the face shape, bigonial ratio, hair texture, and growth direction).
+    4. lifestyleDirectives (exactly 3 targeted lifestyle habit adjustments for postural relief, hydration, or sleep hygiene).
+
+    You must format your response strictly as a JSON object matching the requested schema.`;
+
+    // 4. STRICT JSON SCHEMA INTERFACE: Requesting schema structured exactly to UI expectations
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
       contents: prompt,
@@ -137,49 +207,55 @@ export async function POST(request: Request) {
             routine: {
               type: Type.OBJECT,
               properties: {
-                kinesiology: {
+                structuralKinesiology: {
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
                     properties: {
-                      exerciseName: { type: Type.STRING },
-                      description: { type: Type.STRING },
-                      frequency: { type: Type.STRING },
-                      repsSets: { type: Type.STRING },
-                      targetPostureAngle: { type: Type.STRING },
+                      title: { type: Type.STRING, description: "Name of the corrective exercise or posture training (e.g. Cervical Retraction, Chin Tucks)." },
+                      description: { type: Type.STRING, description: "Detailed step-by-step instructions on form, mechanics, and biomechanics." },
+                      frequency: { type: Type.STRING, description: "How often to perform (e.g., Daily, 3x per week)." },
+                      volume: { type: Type.STRING, description: "Reps, sets, or duration (e.g., 3 sets of 10, or hold for 30 seconds)." },
+                      targetMetrics: { type: Type.STRING, description: "The bio-objective target, referencing the current metric (e.g., Target: < 12° from current 15.2°)." },
                     },
-                    required: ["exerciseName", "description", "frequency", "repsSets", "targetPostureAngle"],
+                    required: ["title", "description", "frequency", "volume", "targetMetrics"],
                   },
                 },
-                topicalActives: {
+                dermBiochemistry: {
                   type: Type.ARRAY,
                   items: {
                     type: Type.OBJECT,
                     properties: {
-                      ingredient: { type: Type.STRING },
-                      purpose: { type: Type.STRING },
-                      applicationFrequency: { type: Type.STRING },
-                      scientificJustification: { type: Type.STRING },
+                      title: { type: Type.STRING, description: "The recommended active chemical or ingredient (e.g., Salicylic Acid, Retinol, Ceramide NP)." },
+                      purpose: { type: Type.STRING, description: "Biochemical mechanism or why it works on their skin profile." },
+                      applicationInstructions: { type: Type.STRING, description: "When and how to apply (e.g., PM, every other night, AM/PM daily)." },
+                      scientificNotes: { type: Type.STRING, description: "Underlying skin cellular study note or scientific explanation." },
                     },
-                    required: ["ingredient", "purpose", "applicationFrequency", "scientificJustification"],
+                    required: ["title", "purpose", "applicationInstructions", "scientificNotes"],
                   },
                 },
-                groomingStyle: {
+                geometricGrooming: {
                   type: Type.OBJECT,
                   properties: {
-                    haircutSuggestion: { type: Type.STRING },
-                    facialHairSuggestion: { type: Type.STRING },
-                    eyebrowShaping: { type: Type.STRING },
-                    reasoning: { type: Type.STRING },
+                    haircutSuggestion: { type: Type.STRING, description: "Precise haircut and styling recommended to balance this face shape and hair texture." },
+                    facialHairGeometry: { type: Type.STRING, description: "How to shave, taper, or trim facial hair to optimize jaw structure and symmetry." },
+                    eyebrowSymmetryMap: { type: Type.STRING, description: "Grooming instructions for the eyebrows to heighten visual symmetry." },
+                    aestheticJustification: { type: Type.STRING, description: "Deep geometric and aesthetic explanation of how these suggestions create face shape harmony." },
                   },
-                  required: ["haircutSuggestion", "facialHairSuggestion", "eyebrowShaping", "reasoning"],
+                  required: ["haircutSuggestion", "facialHairGeometry", "eyebrowSymmetryMap", "aestheticJustification"],
                 },
                 lifestyleDirectives: {
                   type: Type.ARRAY,
+                  description: "Exactly 3 concise daily habit recommendations to assist posture or aesthetic preservation.",
                   items: { type: Type.STRING },
                 },
               },
-              required: ["kinesiology", "topicalActives", "groomingStyle", "lifestyleDirectives"],
+              required: [
+                "structuralKinesiology",
+                "dermBiochemistry",
+                "geometricGrooming",
+                "lifestyleDirectives"
+              ],
             },
           },
           required: ["routine"],
@@ -189,17 +265,17 @@ export async function POST(request: Request) {
 
     const responseText = response.text;
     if (!responseText) {
-      throw new Error("Empty response from Gemini engine");
+      throw new Error("Empty content returned from the Gemini AI engine.");
     }
 
-    const data = JSON.parse(responseText);
+    const parsedData = JSON.parse(responseText.trim());
     return NextResponse.json({
       source: "AuraMax Biometric AI Engine",
-      routine: data.routine,
+      routine: parsedData.routine,
     });
+
   } catch (error: any) {
-    // 2. HARDENED FAILSAFE: Intercept error block to return the structured backup response instead of crashing with 500!
-    console.error("AuraMax API execution encountered an error, activating failsafe backup routine:", error);
+    console.error("AuraMax Recommendations core failed, falling back to static rules:", error);
     return NextResponse.json(
       getFallbackRoutine("AuraMax Static Calibration Engine (Failsafe Mode)")
     );

@@ -609,6 +609,7 @@ export default function AuraMaxDashboardPage() {
               skin: skinCondition === "congested" ? 6.2 : skinCondition === "oily" ? 7.2 : skinCondition === "dry" ? 7.8 : skinCondition === "combination" ? 8.0 : 8.8,
               grooming: groomingStyle === "clean-shaven" ? 8.8 : groomingStyle === "stubble" ? 8.2 : 8.0,
               symmetry: parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - asymmetryIndex * 0.45)).toFixed(1)),
+              posture: parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - tiltAngle * 0.4)).toFixed(1)),
             }}
             routine={routine}
             routineChecks={routineChecks}
