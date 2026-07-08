@@ -8,6 +8,8 @@ export interface BiometricProfile {
   faceShape: string;
   asymmetryIndex: number;
   postureAngle: number;
+  tiltAngle?: number;
+  jawHeightRatio?: number;
   skinCondition: string; // 'dry' | 'oily' | 'combination' | 'normal' | 'congested'
   groomingStyle: string; // 'clean-shaven' | 'stubble' | 'beard'
   subscores: {
@@ -15,6 +17,7 @@ export interface BiometricProfile {
     skin: number;
     grooming: number;
     symmetry: number;
+    posture?: number;
   };
   currentScore: number;
   potentialScore: number;
@@ -29,11 +32,14 @@ export interface HistoricalRecord {
   score: number;
   asymmetryIndex: number;
   postureAngle: number;
+  tiltAngle?: number;
+  jawHeightRatio?: number;
   subscores: {
     jawline: number;
     skin: number;
     grooming: number;
     symmetry: number;
+    posture?: number;
   };
 }
 

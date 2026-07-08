@@ -19,6 +19,8 @@ interface MeshScannerProps {
     faceShape: string;
     asymmetryIndex: number;
     postureAngle: number;
+    tiltAngle: number;
+    jawHeightRatio: number;
   }) => void;
 }
 
@@ -144,9 +146,9 @@ export default function MeshScanner({
   // Calculations for front profile metrics (Symmetry scores & ratios)
   const getFrontMetrics = () => {
     // If the user hasn't dragged/calibrated yet, default to a realistic baseline asymmetry index
-    // An asymmetry index of 7.11 translates to exactly 68/100 symmetry score inside ReportCard (100 - 7.11 * 4.5 = 68)
+    // An asymmetry index of 7.11 translates to exactly 6.8/10 symmetry score
     if (!hasCalibratedFront) {
-      return { faceShape: "Oval", asymmetryIndex: 7.11 };
+      return { faceShape: "Oval", asymmetryIndex: 7.11, tiltAngle: 0.0, jawHeightRatio: 0.611 };
     }
 
     const p = (id: string) => frontPoints.find((pt) => pt.id === id) || frontPoints[0];
@@ -164,9 +166,9 @@ export default function MeshScanner({
     const rJaw = p("r_jaw");
 
     // Face Height & Width
-    const faceHeight = chin.y - forehead.y;
-    const faceWidth = rCheek.x - lCheek.x;
-    const jawWidth = rJaw.x - lJaw.x;
+    const faceHeight = Math.abs(chin.y - forehead.y) || 1;
+    const faceWidth = Math.abs(rCheek.x - lCheek.x);
+    const jawWidth = Math.abs(rJaw.x - lJaw.x);
     const ratio = faceHeight / (faceWidth || 1);
 
     // Face Shape categorization based on mathematical ratios
@@ -227,7 +229,15 @@ export default function MeshScanner({
     // Map this raw sum to a hard, highly critical Asymmetry Index out of 15%
     const asymmetryIndex = Math.min(15.0, Math.max(0.5, parseFloat((rawAsym * 0.95).toFixed(2))));
 
-    return { faceShape, asymmetryIndex };
+    // Jaw Width vs Facial Height ratio
+    const jawHeightRatio = jawWidth / faceHeight;
+
+    // Head tilt angle: deviation of nose bridge line relative to absolute vertical axis
+    const dx = nose.x - forehead.x;
+    const dy = nose.y - forehead.y;
+    const tiltAngle = Math.abs(Math.atan2(dx, dy || 1) * (180 / Math.PI));
+
+    return { faceShape, asymmetryIndex, tiltAngle, jawHeightRatio };
   };
 
   // Calculations for side profile metrics (Posture angle)
@@ -255,9 +265,9 @@ export default function MeshScanner({
   // Trigger metrics update whenever points change
   useEffect(() => {
     if (!isMounted) return;
-    const { faceShape, asymmetryIndex } = getFrontMetrics();
+    const { faceShape, asymmetryIndex, tiltAngle, jawHeightRatio } = getFrontMetrics();
     const { postureAngle } = getSideMetrics();
-    onMetricsChanged({ faceShape, asymmetryIndex, postureAngle });
+    onMetricsChanged({ faceShape, asymmetryIndex, postureAngle, tiltAngle, jawHeightRatio });
   }, [frontPoints, sidePoints, isMounted, hasCalibratedFront, hasCalibratedSide]);
 
   if (!isMounted) {
@@ -539,9 +549,18 @@ export default function MeshScanner({
   const calculatedFront = getFrontMetrics();
   const calculatedSide = getSideMetrics();
 
-  // Derived subscores inside UI matching ReportCard formula logic
-  const frontSymmetryScore = Math.round(Math.max(35, 100 - calculatedFront.asymmetryIndex * 4.5));
-  const sideJawlineScore = Math.round(Math.max(45, 95 - calculatedSide.postureAngle * 1.5));
+  // Helper to retrieve standard tier status labels based on 1-10 scores
+  const getStatusLabel = (score: number) => {
+    if (score >= 9.0) return "Elite Structure";
+    if (score >= 7.0) return "Highly Optimized";
+    if (score >= 5.0) return "Standard Baseline";
+    return "Realignment Advised";
+  };
+
+  // Convert to dynamic, highly specific geometric 1-10 ratings
+  const symmetryScore10 = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - calculatedFront.asymmetryIndex * 0.45)).toFixed(1));
+  const jawlineScore10 = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - Math.abs(calculatedFront.jawHeightRatio - 0.65) * 12)).toFixed(1));
+  const postureScore10 = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - calculatedFront.tiltAngle * 0.4)).toFixed(1));
 
   return (
     <div id="biometric-scanner-module" className="flex flex-col lg:flex-row gap-6 h-full">
@@ -747,62 +766,87 @@ export default function MeshScanner({
 
             <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
               <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
-                <span>ASYMMETRY_IDX</span>
+                <span>BILATERAL_SYMMETRY</span>
                 <div className="text-right">
-                  <span className="text-emerald-400 font-medium">{calculatedFront.asymmetryIndex}%</span>
-                  <span className="text-[9px] text-zinc-500 ml-1">({frontSymmetryScore}/100)</span>
+                  <span className="text-emerald-400 font-medium">{symmetryScore10}/10</span>
+                  <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
+                    {getStatusLabel(symmetryScore10)}
+                  </span>
                 </div>
               </div>
               {/* Range indicator bar */}
               <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
                 <div
                   className={`h-full rounded-full transition-all duration-300 ${
-                    calculatedFront.asymmetryIndex < 3
+                    symmetryScore10 >= 9.0
                       ? "bg-emerald-400"
-                      : calculatedFront.asymmetryIndex < 6
+                      : symmetryScore10 >= 7.0
                       ? "bg-yellow-500"
                       : "bg-red-500"
                   }`}
-                  style={{ width: `${Math.min(100, (calculatedFront.asymmetryIndex / 15) * 100)}%` }}
+                  style={{ width: `${symmetryScore10 * 10}%` }}
                 />
               </div>
               <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                {hasCalibratedFront ? (
-                  "Active custom calibrated alignment. Normal target asymmetry is <3%."
-                ) : (
-                  "Baseline score pre-loaded. Calibrate by dragging coordinates."
-                )}
+                Asymmetry Index: {calculatedFront.asymmetryIndex}%. Ideal asymmetry deviation is &lt;3.0%.
               </p>
             </div>
 
-            {/* Lateral alignment outputs */}
+            {/* Jawline Frame */}
             <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
               <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
-                <span>FORWARD_POSTURE</span>
+                <span>JAWLINE_FRAME</span>
                 <div className="text-right">
-                  <span className="text-emerald-400 font-medium">{calculatedSide.postureAngle}°</span>
-                  <span className="text-[9px] text-zinc-500 ml-1">({sideJawlineScore}/100)</span>
+                  <span className="text-emerald-400 font-medium">{jawlineScore10}/10</span>
+                  <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
+                    {getStatusLabel(jawlineScore10)}
+                  </span>
                 </div>
               </div>
               {/* Range indicator bar */}
               <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
                 <div
                   className={`h-full rounded-full transition-all duration-300 ${
-                    calculatedSide.postureAngle < 15
+                    jawlineScore10 >= 9.0
                       ? "bg-emerald-400"
-                      : calculatedSide.postureAngle < 25
+                      : jawlineScore10 >= 7.0
                       ? "bg-yellow-500"
                       : "bg-red-500"
                   }`}
-                  style={{ width: `${Math.min(100, (calculatedSide.postureAngle / 45) * 100)}%` }}
+                  style={{ width: `${jawlineScore10 * 10}%` }}
                 />
               </div>
               <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                {hasCalibratedSide ? (
-                  "Active cervical-kinesiology vector. Ideal alignment is <15°."
-                ) : (
-                  "Baseline score pre-loaded. Drag nodes to map cervical offset."
-                )}
+                Jaw/Height Ratio: {calculatedFront.jawHeightRatio.toFixed(3)}. Target golden proportion is ~0.650.
+              </p>
+            </div>
+
+            {/* Forward Posture / Head Tilt */}
+            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
+              <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
+                <span>FORWARD_POSTURE_TILT</span>
+                <div className="text-right">
+                  <span className="text-emerald-400 font-medium">{postureScore10}/10</span>
+                  <span className="text-[9px] text-emerald-500/80 block font-mono text-right mt-0.5">
+                    {getStatusLabel(postureScore10)}
+                  </span>
+                </div>
+              </div>
+              {/* Range indicator bar */}
+              <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    postureScore10 >= 9.0
+                      ? "bg-emerald-400"
+                      : postureScore10 >= 7.0
+                      ? "bg-yellow-500"
+                      : "bg-red-500"
+                  }`}
+                  style={{ width: `${postureScore10 * 10}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
+                Nose bridge tilt: {calculatedFront.tiltAngle.toFixed(1)}°. Lateral spinal angle: {calculatedSide.postureAngle.toFixed(1)}°.
               </p>
             </div>
           </div>

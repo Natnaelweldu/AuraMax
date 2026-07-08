@@ -21,8 +21,10 @@ export default function AuraMaxDashboardPage() {
   const [closeupImage, setCloseupImage] = useState<string | null>(null);
 
   const [faceShape, setFaceShape] = useState("Oval");
-  const [asymmetryIndex, setAsymmetryIndex] = useState(3.2);
-  const [postureAngle, setPostureAngle] = useState(14.5);
+  const [asymmetryIndex, setAsymmetryIndex] = useState(7.11);
+  const [postureAngle, setPostureAngle] = useState(18.0);
+  const [tiltAngle, setTiltAngle] = useState(0.0);
+  const [jawHeightRatio, setJawHeightRatio] = useState(0.611);
 
   const [skinCondition, setSkinCondition] = useState<string>("combination");
   const [groomingStyle, setGroomingStyle] = useState<string>("stubble");
@@ -57,10 +59,12 @@ export default function AuraMaxDashboardPage() {
             setFrontImage(savedProfile.frontImage);
             setSideImage(savedProfile.sideImage);
             setCloseupImage(savedProfile.closeupImage);
+            setTiltAngle(savedProfile.tiltAngle ?? 0.0);
+            setJawHeightRatio(savedProfile.jawHeightRatio ?? 0.611);
           }
           setFaceShape(savedMetricsRecord.faceShape || "Oval");
-          setAsymmetryIndex(parseFloat(((100 - (savedMetricsRecord.symmetryScore || 85)) / 4.5).toFixed(2)) || 3.2);
-          setPostureAngle(savedMetricsRecord.forwardHeadAngle || 14.5);
+          setAsymmetryIndex(savedProfile?.asymmetryIndex ?? 7.11);
+          setPostureAngle(savedMetricsRecord.forwardHeadAngle || 18.0);
           setSkinCondition(savedMetricsRecord.skinCondition || "combination");
           setGroomingStyle(savedMetricsRecord.groomingStyle || "stubble");
           setHairTexture(savedMetricsRecord.hairTexture || "straight");
@@ -72,7 +76,10 @@ export default function AuraMaxDashboardPage() {
           setSideImage(savedProfile.sideImage);
           setCloseupImage(savedProfile.closeupImage);
           setFaceShape(savedProfile.faceShape);
-          setPostureAngle(savedProfile.postureAngle);
+          setAsymmetryIndex(savedProfile.asymmetryIndex ?? 7.11);
+          setPostureAngle(savedProfile.postureAngle ?? 18.0);
+          setTiltAngle(savedProfile.tiltAngle ?? 0.0);
+          setJawHeightRatio(savedProfile.jawHeightRatio ?? 0.611);
           setSkinCondition(savedProfile.skinCondition || "combination");
           setGroomingStyle(savedProfile.groomingStyle || "stubble");
           setHairTexture("straight");
@@ -96,14 +103,30 @@ export default function AuraMaxDashboardPage() {
 
     const syncToIndexedDB = async () => {
       try {
+        const rawSymmetry = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - asymmetryIndex * 0.45)).toFixed(1));
+        const rawJawline = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - Math.abs(jawHeightRatio - 0.65) * 12)).toFixed(1));
+        const rawPosture = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - tiltAngle * 0.4)).toFixed(1));
+        
+        let rawSkin = 8.8;
+        if (skinCondition === "congested") rawSkin = 6.2;
+        else if (skinCondition === "oily") rawSkin = 7.2;
+        else if (skinCondition === "dry") rawSkin = 7.8;
+        else if (skinCondition === "combination") rawSkin = 8.0;
+
+        let rawGrooming = 8.5;
+        if (groomingStyle === "stubble") rawGrooming = 8.2;
+        else if (groomingStyle === "clean-shaven") rawGrooming = 8.8;
+        else if (groomingStyle === "beard") rawGrooming = 8.0;
+
         const calculatedSubscores = {
-          jawline: Math.round(Math.max(45, 95 - postureAngle * 1.5)),
-          skin: skinCondition === "congested" ? 62 : skinCondition === "oily" ? 72 : 88,
-          grooming: groomingStyle === "clean-shaven" ? 88 : 82,
-          symmetry: Math.round(Math.max(35, 100 - asymmetryIndex * 4.5)),
+          jawline: rawJawline,
+          skin: rawSkin,
+          grooming: rawGrooming,
+          symmetry: rawSymmetry,
+          posture: rawPosture,
         };
-        const currentScore = Math.round((calculatedSubscores.jawline + calculatedSubscores.skin + calculatedSubscores.grooming + calculatedSubscores.symmetry) / 4);
-        const potentialScore = Math.round((95 + 90 + 92 + 96) / 4);
+        const currentScore = parseFloat(((calculatedSubscores.jawline + calculatedSubscores.skin + calculatedSubscores.grooming + calculatedSubscores.symmetry + calculatedSubscores.posture) / 5).toFixed(1));
+        const potentialScore = 9.5;
 
         await db.profiles.put({
           id: "current_profile",
@@ -113,6 +136,8 @@ export default function AuraMaxDashboardPage() {
           faceShape,
           asymmetryIndex,
           postureAngle,
+          tiltAngle,
+          jawHeightRatio,
           skinCondition,
           groomingStyle,
           subscores: calculatedSubscores,
@@ -439,6 +464,8 @@ export default function AuraMaxDashboardPage() {
               setFaceShape(metrics.faceShape);
               setAsymmetryIndex(metrics.asymmetryIndex);
               setPostureAngle(metrics.postureAngle);
+              setTiltAngle(metrics.tiltAngle);
+              setJawHeightRatio(metrics.jawHeightRatio);
             }}
           />
         </section>
@@ -543,12 +570,14 @@ export default function AuraMaxDashboardPage() {
               III. OPTIMIZATION_SCORECARD_MATRIX
             </h2>
             <span className="h-[1px] flex-1 bg-white/[0.06]" />
-            <span className="text-[10px] font-mono text-zinc-500">POTENTIAL_DELTA_100</span>
+            <span className="text-[10px] font-mono text-zinc-500">POTENTIAL_DELTA_10_SCALE</span>
           </div>
 
           <ReportCard
             asymmetryIndex={asymmetryIndex}
             postureAngle={postureAngle}
+            tiltAngle={tiltAngle}
+            jawHeightRatio={jawHeightRatio}
             skinCondition={skinCondition}
             groomingStyle={groomingStyle}
             historicalRecords={historicalRecords}
@@ -576,10 +605,10 @@ export default function AuraMaxDashboardPage() {
             hairTexture={hairTexture}
             age={age}
             subscores={{
-              jawline: Math.round(Math.max(45, 95 - postureAngle * 1.5)),
-              skin: skinCondition === "congested" ? 62 : skinCondition === "oily" ? 72 : 88,
-              grooming: groomingStyle === "clean-shaven" ? 88 : 82,
-              symmetry: Math.round(Math.max(35, 100 - asymmetryIndex * 4.5)),
+              jawline: parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - Math.abs(jawHeightRatio - 0.65) * 12)).toFixed(1)),
+              skin: skinCondition === "congested" ? 6.2 : skinCondition === "oily" ? 7.2 : skinCondition === "dry" ? 7.8 : skinCondition === "combination" ? 8.0 : 8.8,
+              grooming: groomingStyle === "clean-shaven" ? 8.8 : groomingStyle === "stubble" ? 8.2 : 8.0,
+              symmetry: parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - asymmetryIndex * 0.45)).toFixed(1)),
             }}
             routine={routine}
             routineChecks={routineChecks}

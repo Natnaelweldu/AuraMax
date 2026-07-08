@@ -5,60 +5,76 @@ import { db, HistoricalRecord } from "../lib/db";
 interface ReportCardProps {
   asymmetryIndex: number;
   postureAngle: number;
+  tiltAngle: number;
+  jawHeightRatio: number;
   skinCondition: string;
   groomingStyle: string;
-  onSaveHistory: (score: number) => void;
+  onSaveHistory: (record: HistoricalRecord) => void;
   historicalRecords: HistoricalRecord[];
 }
 
 export const ReportCard: React.FC<ReportCardProps> = ({
   asymmetryIndex,
   postureAngle,
+  tiltAngle,
+  jawHeightRatio,
   skinCondition,
   groomingStyle,
   onSaveHistory,
   historicalRecords,
 }) => {
-  // Dynamically calculate scores based on biometric metrics for integrity
-  const [jawlineScore, setJawlineScore] = useState(82);
-  const [skinScore, setSkinScore] = useState(85);
-  const [groomingScore, setGroomingScore] = useState(78);
-  const [symmetryScore, setSymmetryScore] = useState(90);
+  // Helper to retrieve standard tier status labels based on 1-10 scores
+  const getStatusLabel = (score: number) => {
+    if (score >= 9.0) return "Elite Structure";
+    if (score >= 7.0) return "Highly Optimized";
+    if (score >= 5.0) return "Standard Baseline";
+    return "Realignment Advised";
+  };
+
+  // Dynamically calculate scores based on biometric metrics on 1-10 scale for integrity
+  const [jawlineScore, setJawlineScore] = useState(8.2);
+  const [skinScore, setSkinScore] = useState(8.5);
+  const [groomingScore, setGroomingScore] = useState(7.8);
+  const [symmetryScore, setSymmetryScore] = useState(9.0);
+  const [postureScore, setPostureScore] = useState(9.5);
 
   const [hasScannedThisCycle, setHasScannedThisCycle] = useState(false);
   const [lockCountdown, setLockCountdown] = useState("");
 
   // Recalculate component scores when input biometrics adjust
   useEffect(() => {
-    // Posture angle directly affects Jawline & Frame score (poor posture lowers jaw definition)
-    const newJawline = Math.round(Math.max(45, 95 - postureAngle * 1.5));
+    // Jawline & Frame score based on golden ratio mapping of jaw height to width ratio
+    const newJawline = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - Math.abs(jawHeightRatio - 0.65) * 12)).toFixed(1));
     setJawlineScore(newJawline);
 
     // Symmetry score derived strictly from Facial Asymmetry Index
-    const newSymmetry = Math.round(Math.max(35, 100 - asymmetryIndex * 4.5));
+    const newSymmetry = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - asymmetryIndex * 0.45)).toFixed(1));
     setSymmetryScore(newSymmetry);
 
     // Skin condition score mapping
-    let newSkin = 88;
-    if (skinCondition === "congested") newSkin = 62;
-    else if (skinCondition === "oily") newSkin = 72;
-    else if (skinCondition === "dry") newSkin = 78;
-    else if (skinCondition === "combination") newSkin = 80;
+    let newSkin = 8.8;
+    if (skinCondition === "congested") newSkin = 6.2;
+    else if (skinCondition === "oily") newSkin = 7.2;
+    else if (skinCondition === "dry") newSkin = 7.8;
+    else if (skinCondition === "combination") newSkin = 8.0;
     setSkinScore(newSkin);
 
     // Grooming style score mapping
-    let newGrooming = 85;
-    if (groomingStyle === "stubble") newGrooming = 82;
-    else if (groomingStyle === "clean-shaven") newGrooming = 88;
-    else if (groomingStyle === "beard") newGrooming = 80;
+    let newGrooming = 8.5;
+    if (groomingStyle === "stubble") newGrooming = 8.2;
+    else if (groomingStyle === "clean-shaven") newGrooming = 8.8;
+    else if (groomingStyle === "beard") newGrooming = 8.0;
     setGroomingScore(newGrooming);
-  }, [asymmetryIndex, postureAngle, skinCondition, groomingStyle]);
+
+    // Forward Posture / Tilt based on nose bridge angular deviation
+    const newPosture = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - tiltAngle * 0.4)).toFixed(1));
+    setPostureScore(newPosture);
+  }, [asymmetryIndex, postureAngle, tiltAngle, jawHeightRatio, skinCondition, groomingStyle]);
 
   // Overall calculations
-  const currentScore = Math.round((jawlineScore + skinScore + groomingScore + symmetryScore) / 4);
-  // Potential score represents fully optimized posture (0 angle), balanced symmetry, and ideal skin
-  const potentialScore = Math.round((95 + 94 + 92 + 96) / 4);
-  const aestheticDelta = potentialScore - currentScore;
+  const currentScore = parseFloat(((jawlineScore + skinScore + groomingScore + symmetryScore + postureScore) / 5).toFixed(1));
+  const potentialScore = 9.5;
+  const aestheticDelta = parseFloat((potentialScore - currentScore).toFixed(1));
 
   // Check 30-day lock cycle on mount
   useEffect(() => {
@@ -84,7 +100,19 @@ export const ReportCard: React.FC<ReportCardProps> = ({
   }, [historicalRecords]);
 
   const handleLockRecord = () => {
-    onSaveHistory(currentScore);
+    const record: HistoricalRecord = {
+      timestamp: Date.now(),
+      score: currentScore,
+      asymmetryIndex,
+      postureAngle, // Keep postureAngle raw as lateral posture angle
+      subscores: {
+        jawline: Math.round(jawlineScore * 10), // Keep 100-point compatibility for internal structure
+        skin: Math.round(skinScore * 10),
+        grooming: Math.round(groomingScore * 10),
+        symmetry: Math.round(symmetryScore * 10),
+      }
+    };
+    onSaveHistory(record);
     setHasScannedThisCycle(true);
     // Standard mock cycle countdown for visual feedback immediately
     setLockCountdown("29d 23h remaining");
@@ -116,61 +144,100 @@ export const ReportCard: React.FC<ReportCardProps> = ({
           </div>
 
           {/* Subscores Grid */}
-          <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
             
             {/* Jawline & Frame */}
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden">
-              <div className="flex justify-between items-end mb-1">
-                <span className="text-[10px] font-mono text-zinc-400">JAWLINE_FRAME</span>
-                <span className="text-sm font-mono font-semibold text-zinc-100">{jawlineScore}</span>
+            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden flex flex-col justify-between min-h-[96px]">
+              <div>
+                <div className="flex justify-between items-start mb-1">
+                  <div>
+                    <span className="text-[10px] font-mono text-zinc-400 block leading-tight">JAWLINE_FRAME</span>
+                    <span className="text-[9px] text-emerald-400 font-mono leading-none">{getStatusLabel(jawlineScore)}</span>
+                  </div>
+                  <span className="text-xs font-mono font-semibold text-zinc-100">{jawlineScore}/10</span>
+                </div>
+                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${jawlineScore * 10}%` }} />
+                </div>
               </div>
-              <div className="h-1 bg-zinc-900 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${jawlineScore}%` }} />
+              <p className="text-[9px] text-zinc-500 font-sans leading-relaxed">
+                Jaw/height ratio: {jawHeightRatio.toFixed(3)}. Ideal is ~0.650.
+              </p>
+            </div>
+
+            {/* Symmetry */}
+            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden flex flex-col justify-between min-h-[96px]">
+              <div>
+                <div className="flex justify-between items-start mb-1">
+                  <div>
+                    <span className="text-[10px] font-mono text-zinc-400 block leading-tight">BILATERAL_SYMMETRY</span>
+                    <span className="text-[9px] text-emerald-400 font-mono leading-none">{getStatusLabel(symmetryScore)}</span>
+                  </div>
+                  <span className="text-xs font-mono font-semibold text-zinc-100">{symmetryScore}/10</span>
+                </div>
+                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${symmetryScore * 10}%` }} />
+                </div>
               </div>
-              <p className="text-[9px] text-zinc-500 mt-1 font-sans">
-                Postural offset of {postureAngle}° loads cervical muscles.
+              <p className="text-[9px] text-zinc-500 font-sans leading-relaxed">
+                Asymmetry index: {asymmetryIndex.toFixed(2)}%. Target deviation is &lt;3%.
+              </p>
+            </div>
+
+            {/* Forward Head Posture */}
+            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden flex flex-col justify-between min-h-[96px]">
+              <div>
+                <div className="flex justify-between items-start mb-1">
+                  <div>
+                    <span className="text-[10px] font-mono text-zinc-400 block leading-tight">FORWARD_POSTURE</span>
+                    <span className="text-[9px] text-emerald-400 font-mono leading-none">{getStatusLabel(postureScore)}</span>
+                  </div>
+                  <span className="text-xs font-mono font-semibold text-zinc-100">{postureScore}/10</span>
+                </div>
+                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${postureScore * 10}%` }} />
+                </div>
+              </div>
+              <p className="text-[9px] text-zinc-500 font-sans leading-relaxed">
+                Nose tilt: {tiltAngle.toFixed(1)}° | Lateral spine: {postureAngle.toFixed(1)}°.
               </p>
             </div>
 
             {/* Skin Health */}
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden">
-              <div className="flex justify-between items-end mb-1">
-                <span className="text-[10px] font-mono text-zinc-400">SKIN_HEALTH</span>
-                <span className="text-sm font-mono font-semibold text-zinc-100">{skinScore}</span>
+            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden flex flex-col justify-between min-h-[96px]">
+              <div>
+                <div className="flex justify-between items-start mb-1">
+                  <div>
+                    <span className="text-[10px] font-mono text-zinc-400 block leading-tight">SKIN_HEALTH</span>
+                    <span className="text-[9px] text-emerald-400 font-mono leading-none">{getStatusLabel(skinScore)}</span>
+                  </div>
+                  <span className="text-xs font-mono font-semibold text-zinc-100">{skinScore}/10</span>
+                </div>
+                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${skinScore * 10}%` }} />
+                </div>
               </div>
-              <div className="h-1 bg-zinc-900 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${skinScore}%` }} />
-              </div>
-              <p className="text-[9px] text-zinc-500 mt-1 font-sans">
+              <p className="text-[9px] text-zinc-500 font-sans leading-relaxed">
                 Type: {skinCondition.toUpperCase()} active synthesis state.
               </p>
             </div>
 
             {/* Hair & Grooming */}
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden">
-              <div className="flex justify-between items-end mb-1">
-                <span className="text-[10px] font-mono text-zinc-400">GROOM_STYLING</span>
-                <span className="text-sm font-mono font-semibold text-zinc-100">{groomingScore}</span>
+            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden flex flex-col justify-between min-h-[96px] sm:col-span-2">
+              <div>
+                <div className="flex justify-between items-start mb-1">
+                  <div>
+                    <span className="text-[10px] font-mono text-zinc-400 block leading-tight">GROOM_STYLING</span>
+                    <span className="text-[9px] text-emerald-400 font-mono leading-none">{getStatusLabel(groomingScore)}</span>
+                  </div>
+                  <span className="text-xs font-mono font-semibold text-zinc-100">{groomingScore}/10</span>
+                </div>
+                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                  <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${groomingScore * 10}%` }} />
+                </div>
               </div>
-              <div className="h-1 bg-zinc-900 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${groomingScore}%` }} />
-              </div>
-              <p className="text-[9px] text-zinc-500 mt-1 font-sans">
+              <p className="text-[9px] text-zinc-500 font-sans leading-relaxed">
                 Preferred: {groomingStyle.toUpperCase()} structural balance.
-              </p>
-            </div>
-
-            {/* Symmetry */}
-            <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05] relative overflow-hidden">
-              <div className="flex justify-between items-end mb-1">
-                <span className="text-[10px] font-mono text-zinc-400">BILATERAL_SYMMETRY</span>
-                <span className="text-sm font-mono font-semibold text-zinc-100">{symmetryScore}</span>
-              </div>
-              <div className="h-1 bg-zinc-900 rounded-full overflow-hidden">
-                <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${symmetryScore}%` }} />
-              </div>
-              <p className="text-[9px] text-zinc-500 mt-1 font-sans">
-                Derived asymmetry index: {asymmetryIndex}%.
               </p>
             </div>
 
@@ -289,9 +356,11 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                     </span>
                     <div className="flex items-center gap-3">
                       <span className="text-zinc-500">
-                        ASYM: {rec.asymmetryIndex}% | PST: {rec.postureAngle}°
+                        ASYM: {rec.asymmetryIndex.toFixed(1)}% | PST: {rec.postureAngle.toFixed(1)}°
                       </span>
-                      <span className="text-emerald-400 font-bold">{rec.score} PTS</span>
+                      <span className="text-emerald-400 font-bold">
+                        {(rec.score > 10 ? rec.score / 10 : rec.score).toFixed(1)} /10
+                      </span>
                     </div>
                   </div>
                 ))}
