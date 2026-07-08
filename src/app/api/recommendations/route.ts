@@ -2,91 +2,106 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
 
 export async function POST(request: Request) {
+  // Define fallback logic at the top so it's accessible in both primary fallback and catch-block failure states.
+  let faceShape = "Oval";
+  let symmetryScore = 85;
+  let forwardHeadAngle = 14.5;
+  let hairTexture = "straight";
+  let age = 21;
+  let skinCondition = "combination";
+  let groomingStyle = "stubble";
+
+  const getFallbackRoutine = (sourceLabel: string) => {
+    const faceShapeLower = faceShape.toLowerCase();
+    const haircut = faceShapeLower === "round"
+      ? "Textured crop with high fade to add vertical dimension"
+      : faceShapeLower === "square"
+      ? "Soft textured pompadour with tapered sides to soften angles"
+      : faceShapeLower === "heart"
+      ? "Mid-length scissor cut with side parting to balance forehead"
+      : "Classic low-taper fade with textured volume on top";
+
+    return {
+      source: sourceLabel,
+      routine: {
+        kinesiology: [
+          {
+            exerciseName: "Cervical Retraction (Chin Tucks)",
+            description: "Pull your head straight back, keeping eyes level, like making a double chin. Hold 5s.",
+            frequency: "Daily",
+            repsSets: "3 sets of 10 reps",
+            targetPostureAngle: `< 12° (Current: ${forwardHeadAngle}°)`,
+          },
+          {
+            exerciseName: "Suboccipital Release Stretch",
+            description: "Gently tuck chin and pull the base of the skull upward to release deep cervical extensors.",
+            frequency: "Twice daily",
+            repsSets: "4 holds of 20 seconds",
+            targetPostureAngle: `< 12° (Current: ${forwardHeadAngle}°)`,
+          },
+          {
+            exerciseName: "Symmetric Masseter Massage & Release",
+            description: "Apply firm circular pressure to masseter muscles on both sides to release unilateral biting tension.",
+            frequency: "Daily, before rest",
+            repsSets: "2 minutes per side",
+            targetPostureAngle: `Symmetry Target: > 92% (Current: ${symmetryScore}%)`,
+          },
+        ],
+        topicalActives: [
+          {
+            ingredient: skinCondition === "oily" ? "Salicylic Acid (BHA) 2%" : "Niacinamide 5%",
+            purpose: skinCondition === "oily" ? "Deep follicular sebum control and pore clearing" : "Barrier support and sebum stabilization",
+            applicationFrequency: "PM, every other night",
+            scientificJustification: `Regulates lipid production optimized for ${skinCondition} skin profiles.`,
+          },
+          {
+            ingredient: "Hyaluronic Acid & Ceramide NP Complex",
+            purpose: "Transepidermal water loss reduction",
+            applicationFrequency: "AM/PM daily",
+            scientificJustification: "Maintains optimal stratum corneum hydration to support cellular turnover.",
+          },
+        ],
+        groomingStyle: {
+          haircutSuggestion: haircut,
+          facialHairSuggestion: groomingStyle === "clean-shaven"
+            ? "Slick, clean-shaven definition with straight lines across cheeks"
+            : "Structured low-cheek stubble to contour jaw symmetry",
+          eyebrowShaping: "Neat horizontal shape with subtle arch tapering",
+          reasoning: `Structured to complement a ${faceShape} shape and maximize facial harmony.`,
+        },
+        lifestyleDirectives: [
+          `Maintain monitor height at direct eye level to decrease cervical load from ${forwardHeadAngle}°`,
+          "Sleep on an ergonomic contoured pillow to prevent unilateral facial compression",
+          "Perform symmetric chewing exercises to balance jaw masseter muscle hypertrophy",
+        ],
+      },
+    };
+  };
+
   try {
-    const body = await request.json();
-    const {
-      faceShape = "Oval",
-      symmetryScore = 85,
-      forwardHeadAngle = 14.5,
-      hairTexture = "wavy",
-      age = 28,
-      skinCondition = "combination",
-      groomingStyle = "stubble",
-    } = body;
+    // 1. PARAMETER FALLBACKS: Robust extraction from incoming JSON body
+    let body: any = {};
+    try {
+      body = await request.json();
+    } catch (e) {
+      console.warn("Unable to parse request body JSON, using defaults.");
+    }
+
+    // Assign fallback values if parameters are missing, null, or empty
+    faceShape = body?.faceShape || "Oval";
+    symmetryScore = typeof body?.symmetryScore === "number" ? body.symmetryScore : 85;
+    forwardHeadAngle = typeof body?.forwardHeadAngle === "number" ? body.forwardHeadAngle : 14.5;
+    hairTexture = body?.hairTexture || "straight"; // Default to straight as requested
+    age = typeof body?.age === "number" ? body.age : 21; // Default to 21 as requested
+    skinCondition = body?.skinCondition || "combination";
+    groomingStyle = body?.groomingStyle || "stubble";
 
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // Default high-quality structured backup response matching the exact faceShape and inputs
-    const getFallbackRoutine = () => {
-      const faceShapeLower = faceShape.toLowerCase();
-      const haircut = faceShapeLower === "round"
-        ? "Textured crop with high fade to add vertical dimension"
-        : faceShapeLower === "square"
-        ? "Soft textured pompadour with tapered sides to soften angles"
-        : faceShapeLower === "heart"
-        ? "Mid-length scissor cut with side parting to balance forehead"
-        : "Classic low-taper fade with textured volume on top";
-
-      return {
-        source: "AuraMax Static Calibration Engine (No API Key)",
-        routine: {
-          kinesiology: [
-            {
-              exerciseName: "Cervical Retraction (Chin Tucks)",
-              description: "Pull your head straight back, keeping eyes level, like making a double chin. Hold 5s.",
-              frequency: "Daily",
-              repsSets: "3 sets of 10 reps",
-              targetPostureAngle: `< 12° (Current: ${forwardHeadAngle}°)`,
-            },
-            {
-              exerciseName: "Suboccipital Release Stretch",
-              description: "Gently tuck chin and pull the base of the skull upward to release deep cervical extensors.",
-              frequency: "Twice daily",
-              repsSets: "4 holds of 20 seconds",
-              targetPostureAngle: `< 12° (Current: ${forwardHeadAngle}°)`,
-            },
-            {
-              exerciseName: "Symmetric Masseter Massage & Release",
-              description: "Apply firm circular pressure to masseter muscles on both sides to release unilateral biting tension.",
-              frequency: "Daily, before rest",
-              repsSets: "2 minutes per side",
-              targetPostureAngle: `Symmetry Target: > 92% (Current: ${symmetryScore}%)`,
-            },
-          ],
-          topicalActives: [
-            {
-              ingredient: skinCondition === "oily" ? "Salicylic Acid (BHA) 2%" : "Niacinamide 5%",
-              purpose: skinCondition === "oily" ? "Deep follicular sebum control and pore clearing" : "Barrier support and sebum stabilization",
-              applicationFrequency: "PM, every other night",
-              scientificJustification: `Regulates lipid production optimized for ${skinCondition} skin profiles.`,
-            },
-            {
-              ingredient: "Hyaluronic Acid & Ceramide NP Complex",
-              purpose: "Transepidermal water loss reduction",
-              applicationFrequency: "AM/PM daily",
-              scientificJustification: "Maintains optimal stratum corneum hydration to support cellular turnover.",
-            },
-          ],
-          groomingStyle: {
-            haircutSuggestion: haircut,
-            facialHairSuggestion: groomingStyle === "clean-shaven"
-              ? "Slick, clean-shaven definition with straight lines across cheeks"
-              : "Structured low-cheek stubble to contour jaw symmetry",
-            eyebrowShaping: "Neat horizontal shape with subtle arch tapering",
-            reasoning: `Structured to complement a ${faceShape} shape and maximize facial harmony.`,
-          },
-          lifestyleDirectives: [
-            `Maintain monitor height at direct eye level to decrease cervical load from ${forwardHeadAngle}°`,
-            "Sleep on an ergonomic contoured pillow to prevent unilateral facial compression",
-            "Perform symmetric chewing exercises to balance jaw masseter muscle hypertrophy",
-          ],
-        },
-      };
-    };
-
+    // 2. HARDENED FAILSAFE: Intercept missing API key and return static fallback instantly with 200 OK
     if (!apiKey) {
-      console.warn("GEMINI_API_KEY environment variable is not defined. Falling back to structured static calibration.");
-      return NextResponse.json(getFallbackRoutine());
+      console.warn("GEMINI_API_KEY is not defined. Returning structured static fallback routine.");
+      return NextResponse.json(getFallbackRoutine("AuraMax Static Calibration Engine (Offline Mode)"));
     }
 
     // Lazy initialize GoogleGenAI client with correct headers
@@ -183,13 +198,10 @@ export async function POST(request: Request) {
       routine: data.routine,
     });
   } catch (error: any) {
-    console.error("AuraMax recommendation API error:", error);
+    // 2. HARDENED FAILSAFE: Intercept error block to return the structured backup response instead of crashing with 500!
+    console.error("AuraMax API execution encountered an error, activating failsafe backup routine:", error);
     return NextResponse.json(
-      {
-        error: "Internal recommendation generation failure",
-        details: error?.message || String(error),
-      },
-      { status: 500 }
+      getFallbackRoutine("AuraMax Static Calibration Engine (Failsafe Mode)")
     );
   }
 }

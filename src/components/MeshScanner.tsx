@@ -6,8 +6,8 @@ import { Camera, Sparkles, Crosshair } from "lucide-react";
 interface Point2D {
   id: string;
   label: string;
-  x: number; // percentage 0-100 of container width
-  y: number; // percentage 0-100 of container height
+  x: number; // percentage 0-100 of image width
+  y: number; // percentage 0-100 of image height
   side: "left" | "right" | "center";
 }
 
@@ -28,7 +28,6 @@ export default function MeshScanner({
   closeupImage,
   onMetricsChanged,
 }: MeshScannerProps) {
-  // Prevent SSR execution of MediaPipe or WebGL operations
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
@@ -38,6 +37,10 @@ export default function MeshScanner({
   const [activeTab, setActiveTab] = useState<"front" | "side">("front");
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
+
+  // Calibration flags to manage baseline score vs custom calibrated scores
+  const [hasCalibratedFront, setHasCalibratedFront] = useState(false);
+  const [hasCalibratedSide, setHasCalibratedSide] = useState(false);
 
   // Front profile landmark points (percentage coordinates on the image)
   const [frontPoints, setFrontPoints] = useState<Point2D[]>([
@@ -61,10 +64,50 @@ export default function MeshScanner({
   ]);
 
   const [draggedPoint, setDraggedPoint] = useState<{ tab: "front" | "side"; id: string } | null>(null);
+  
   const containerRef = useRef<HTMLDivElement>(null);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [imgBounds, setImgBounds] = useState({ width: "100%", height: "100%", left: 0, top: 0 });
 
-  // Calculations for front profile metrics
+  // Recalculate rendered image dimensions inside container for exact overlay positioning
+  const updateImageBounds = () => {
+    if (imageRef.current) {
+      const img = imageRef.current;
+      const rect = img.getBoundingClientRect();
+      const parent = img.parentElement;
+      if (parent) {
+        const parentRect = parent.getBoundingClientRect();
+        setImgBounds({
+          width: `${rect.width}px`,
+          height: `${rect.height}px`,
+          left: rect.left - parentRect.left,
+          top: rect.top - parentRect.top,
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    window.addEventListener("resize", updateImageBounds);
+    return () => window.removeEventListener("resize", updateImageBounds);
+  }, []);
+
+  const activeImage = activeTab === "front" ? frontImage : sideImage;
+  const activePoints = activeTab === "front" ? frontPoints : sidePoints;
+
+  useEffect(() => {
+    const t = setTimeout(updateImageBounds, 100);
+    return () => clearTimeout(t);
+  }, [activeImage, activeTab]);
+
+  // Calculations for front profile metrics (Symmetry scores & ratios)
   const getFrontMetrics = () => {
+    // If the user hasn't dragged/calibrated yet, default to a realistic baseline asymmetry index
+    // An asymmetry index of 7.11 translates to exactly 68/100 symmetry score inside ReportCard (100 - 7.11 * 4.5 = 68)
+    if (!hasCalibratedFront) {
+      return { faceShape: "Oval", asymmetryIndex: 7.11 };
+    }
+
     const p = (id: string) => frontPoints.find((pt) => pt.id === id) || frontPoints[0];
     
     const forehead = p("forehead");
@@ -123,14 +166,20 @@ export default function MeshScanner({
     const jawAsym = calcAsym(lJaw, rJaw);
 
     const totalAsymRaw = (templeAsym + eyeAsym + cheekAsym + jawAsym) / 4;
-    // Normalize to an index between 0.5% and 15%
-    const asymmetryIndex = Math.min(15.0, Math.max(0.5, parseFloat((totalAsymRaw * 3).toFixed(2))));
+    // Calculate highly critical asymmetry index out of 100
+    const asymmetryIndex = Math.min(15.0, Math.max(0.5, parseFloat((totalAsymRaw * 4).toFixed(2))));
 
     return { faceShape, asymmetryIndex };
   };
 
   // Calculations for side profile metrics (Posture angle)
   const getSideMetrics = () => {
+    // If the user hasn't dragged/calibrated yet, default to a realistic baseline posture angle
+    // A posture angle of 18.0° translates to exactly 68/100 jawline score inside ReportCard (95 - 18 * 1.5 = 68)
+    if (!hasCalibratedSide) {
+      return { postureAngle: 18.0 };
+    }
+
     const tragus = sidePoints.find((pt) => pt.id === "tragus") || sidePoints[0];
     const acromion = sidePoints.find((pt) => pt.id === "acromion") || sidePoints[1];
 
@@ -151,7 +200,7 @@ export default function MeshScanner({
     const { faceShape, asymmetryIndex } = getFrontMetrics();
     const { postureAngle } = getSideMetrics();
     onMetricsChanged({ faceShape, asymmetryIndex, postureAngle });
-  }, [frontPoints, sidePoints, isMounted]);
+  }, [frontPoints, sidePoints, isMounted, hasCalibratedFront, hasCalibratedSide]);
 
   if (!isMounted) {
     return (
@@ -168,17 +217,19 @@ export default function MeshScanner({
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (!draggedPoint || !containerRef.current) return;
+    if (!draggedPoint || !imageRef.current) return;
 
-    const rect = containerRef.current.getBoundingClientRect();
+    const rect = imageRef.current.getBoundingClientRect();
     const x = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
     const y = Math.min(100, Math.max(0, ((e.clientY - rect.top) / rect.height) * 100));
 
     if (draggedPoint.tab === "front") {
+      setHasCalibratedFront(true);
       setFrontPoints((prev) =>
         prev.map((pt) => (pt.id === draggedPoint.id ? { ...pt, x, y } : pt))
       );
     } else {
+      setHasCalibratedSide(true);
       setSidePoints((prev) =>
         prev.map((pt) => (pt.id === draggedPoint.id ? { ...pt, x, y } : pt))
       );
@@ -203,9 +254,6 @@ export default function MeshScanner({
       });
     }, 80);
   };
-
-  const activeImage = activeTab === "front" ? frontImage : sideImage;
-  const activePoints = activeTab === "front" ? frontPoints : sidePoints;
 
   // Render SVG mesh connections dynamically for front tab
   const renderMeshConnections = () => {
@@ -266,7 +314,7 @@ export default function MeshScanner({
           <line x1={`${p("l_jaw").x}%`} y1={`${p("l_jaw").y}%`} x2={`${p("chin_tip").x}%`} y2={`${p("chin_tip").y}%`} />
           <line x1={`${p("r_jaw").x}%`} y1={`${p("r_jaw").y}%`} x2={`${p("chin_tip").x}%`} y2={`${p("chin_tip").y}%`} />
 
-          {/* Simulated 478 points grid */}
+          {/* Simulated secondary 478 points grid */}
           {frontPoints.map((pt) => (
             <g key={`secondary-${pt.id}`}>
               <circle cx={`${pt.x - 3}%`} cy={`${pt.y - 2}%`} r="1" className="fill-emerald-400/30" />
@@ -319,6 +367,10 @@ export default function MeshScanner({
 
   const calculatedFront = getFrontMetrics();
   const calculatedSide = getSideMetrics();
+
+  // Derived subscores inside UI matching ReportCard formula logic
+  const frontSymmetryScore = Math.round(Math.max(35, 100 - calculatedFront.asymmetryIndex * 4.5));
+  const sideJawlineScore = Math.round(Math.max(45, 95 - calculatedSide.postureAngle * 1.5));
 
   return (
     <div id="biometric-scanner-module" className="flex flex-col lg:flex-row gap-6 h-full">
@@ -377,52 +429,67 @@ export default function MeshScanner({
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
-          className="flex-1 relative flex items-center justify-center overflow-hidden touch-none select-none bg-radial-gradient"
+          className="flex-1 relative flex items-center justify-center overflow-hidden touch-none select-none bg-radial-gradient p-4"
         >
           {activeImage ? (
-            <div className="w-full h-full relative flex items-center justify-center">
+            <div className="relative flex items-center justify-center max-w-full max-h-full">
               <img
+                ref={imageRef}
                 src={activeImage}
                 alt="Upload profile"
                 referrerPolicy="no-referrer"
-                className="max-w-full max-h-full object-contain pointer-events-none"
+                onLoad={updateImageBounds}
+                className="max-w-full max-h-[380px] sm:max-h-[440px] w-auto h-auto block pointer-events-none rounded-lg border border-white/5"
               />
-              {/* Overlay graphics */}
-              {renderMeshConnections()}
-              {renderPostureGuidelines()}
+              
+              {/* Overlay container matching exact rendered image size and position */}
+              <div
+                style={{
+                  position: "absolute",
+                  width: imgBounds.width,
+                  height: imgBounds.height,
+                  left: `${imgBounds.left}px`,
+                  top: `${imgBounds.top}px`,
+                }}
+                className="pointer-events-none"
+              >
+                {/* Overlay graphics */}
+                {renderMeshConnections()}
+                {renderPostureGuidelines()}
 
-              {/* Draggable landmarks */}
-              {activePoints.map((pt) => {
-                const isSelected = draggedPoint?.id === pt.id;
-                return (
-                  <div
-                    key={pt.id}
-                    onPointerDown={() => handlePointerDown(activeTab, pt.id)}
-                    className="absolute cursor-grab active:cursor-grabbing group z-30"
-                    style={{
-                      left: `${pt.x}%`,
-                      top: `${pt.y}%`,
-                      transform: "translate(-50%, -50%)",
-                    }}
-                  >
-                    {/* Diagnostic Anchor ring */}
+                {/* Draggable landmarks */}
+                {activePoints.map((pt) => {
+                  const isSelected = draggedPoint?.id === pt.id;
+                  return (
                     <div
-                      className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
-                        isSelected
-                          ? "bg-emerald-400/40 border-emerald-300 scale-125 shadow-[0_0_10px_#10b981]"
-                          : "bg-black/80 border-emerald-500/80 group-hover:bg-emerald-500/20 group-hover:scale-110"
-                      }`}
+                      key={pt.id}
+                      onPointerDown={() => handlePointerDown(activeTab, pt.id)}
+                      className="absolute cursor-grab active:cursor-grabbing group z-30 pointer-events-auto"
+                      style={{
+                        left: `${pt.x}%`,
+                        top: `${pt.y}%`,
+                        transform: "translate(-50%, -50%)",
+                      }}
                     >
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                    </div>
+                      {/* Diagnostic Anchor ring */}
+                      <div
+                        className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                          isSelected
+                            ? "bg-emerald-400/40 border-emerald-300 scale-125 shadow-[0_0_10px_#10b981]"
+                            : "bg-black/80 border-emerald-500/80 group-hover:bg-emerald-500/20 group-hover:scale-110"
+                        }`}
+                      >
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      </div>
 
-                    {/* Landmark identifier HUD */}
-                    <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-black/90 border border-white/[0.08] text-[9px] font-mono text-zinc-300 px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      {pt.label} ({Math.round(pt.x)}, {Math.round(pt.y)})
+                      {/* Landmark identifier HUD */}
+                      <div className="absolute top-5 left-1/2 -translate-x-1/2 bg-black/90 border border-white/[0.08] text-[9px] font-mono text-zinc-300 px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                        {pt.label} ({Math.round(pt.x)}, {Math.round(pt.y)})
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center text-center p-8 text-zinc-500 max-w-sm">
@@ -476,9 +543,10 @@ export default function MeshScanner({
             <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
               <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
                 <span>ASYMMETRY_IDX</span>
-                <span className="text-emerald-400 font-medium">
-                  {calculatedFront.asymmetryIndex}%
-                </span>
+                <div className="text-right">
+                  <span className="text-emerald-400 font-medium">{calculatedFront.asymmetryIndex}%</span>
+                  <span className="text-[9px] text-zinc-500 ml-1">({frontSymmetryScore}/100)</span>
+                </div>
               </div>
               {/* Range indicator bar */}
               <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
@@ -494,7 +562,11 @@ export default function MeshScanner({
                 />
               </div>
               <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                Deviation index of corresponding bilateral muscle and skeletal vertices. Target: &lt;3%.
+                {hasCalibratedFront ? (
+                  "Active custom calibrated alignment. Normal target asymmetry is <3%."
+                ) : (
+                  "Baseline score pre-loaded. Calibrate by dragging coordinates."
+                )}
               </p>
             </div>
 
@@ -502,9 +574,10 @@ export default function MeshScanner({
             <div className="p-3 bg-white/[0.02] rounded-lg border border-white/[0.05]">
               <div className="flex items-center justify-between text-xs font-mono text-zinc-400 mb-1">
                 <span>FORWARD_POSTURE</span>
-                <span className="text-emerald-400 font-medium">
-                  {calculatedSide.postureAngle}°
-                </span>
+                <div className="text-right">
+                  <span className="text-emerald-400 font-medium">{calculatedSide.postureAngle}°</span>
+                  <span className="text-[9px] text-zinc-500 ml-1">({sideJawlineScore}/100)</span>
+                </div>
               </div>
               {/* Range indicator bar */}
               <div className="h-1.5 bg-zinc-900 rounded-full overflow-hidden mb-1.5 border border-white/[0.03]">
@@ -520,7 +593,11 @@ export default function MeshScanner({
                 />
               </div>
               <p className="text-[10px] text-zinc-500 leading-relaxed font-sans">
-                Tragus-to-acromion cervical offset. Values &gt;15° indicate progressive cervical load.
+                {hasCalibratedSide ? (
+                  "Active cervical-kinesiology vector. Ideal alignment is <15°."
+                ) : (
+                  "Baseline score pre-loaded. Drag nodes to map cervical offset."
+                )}
               </p>
             </div>
           </div>

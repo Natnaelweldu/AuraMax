@@ -26,8 +26,8 @@ export default function AuraMaxDashboardPage() {
 
   const [skinCondition, setSkinCondition] = useState<string>("combination");
   const [groomingStyle, setGroomingStyle] = useState<string>("stubble");
-  const [hairTexture, setHairTexture] = useState<string>("wavy");
-  const [age, setAge] = useState<number>(28);
+  const [hairTexture, setHairTexture] = useState<string>("straight");
+  const [age, setAge] = useState<number>(21);
 
   const [routine, setRoutine] = useState<any | null>(null);
   const [routineChecks, setRoutineChecks] = useState<string[]>([]);
@@ -63,8 +63,8 @@ export default function AuraMaxDashboardPage() {
           setPostureAngle(savedMetricsRecord.forwardHeadAngle || 14.5);
           setSkinCondition(savedMetricsRecord.skinCondition || "combination");
           setGroomingStyle(savedMetricsRecord.groomingStyle || "stubble");
-          setHairTexture(savedMetricsRecord.hairTexture || "wavy");
-          setAge(savedMetricsRecord.age || 28);
+          setHairTexture(savedMetricsRecord.hairTexture || "straight");
+          setAge(savedMetricsRecord.age || 21);
           setRoutine(savedMetricsRecord.routine);
           setRoutineChecks(savedMetricsRecord.routineChecks || []);
         } else if (savedProfile) {
@@ -75,8 +75,8 @@ export default function AuraMaxDashboardPage() {
           setPostureAngle(savedProfile.postureAngle);
           setSkinCondition(savedProfile.skinCondition || "combination");
           setGroomingStyle(savedProfile.groomingStyle || "stubble");
-          setHairTexture("wavy");
-          setAge(28);
+          setHairTexture("straight");
+          setAge(21);
           setRoutine(savedProfile.routine);
           setRoutineChecks(savedProfile.routineChecks || []);
         }
@@ -194,8 +194,8 @@ export default function AuraMaxDashboardPage() {
       setPostureAngle(14.5);
       setSkinCondition("combination");
       setGroomingStyle("stubble");
-      setHairTexture("wavy");
-      setAge(28);
+      setHairTexture("straight");
+      setAge(21);
       setRoutine(null);
       setRoutineChecks([]);
       setHistoricalRecords([]);
