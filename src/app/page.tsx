@@ -1,13 +1,21 @@
-import React, { useState, useEffect } from "react";
-import { Camera, Upload, RefreshCw, Sparkles, HardDrive, ShieldCheck, Cpu, Info, Check, Trash2, Calendar } from "lucide-react";
-import { db, BiometricProfile, HistoricalRecord } from "./lib/db";
-import { HeadWireframe } from "./components/HeadWireframes";
-import { BiometricScanner } from "./components/BiometricScanner";
-import { ReportCard } from "./components/ReportCard";
-import { RoutineBuilder } from "./components/RoutineBuilder";
+"use client";
 
-export default function App() {
-  // Main state managers
+import React, { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
+import { 
+  Camera, Upload, RefreshCw, Sparkles, HardDrive, 
+  ShieldCheck, Cpu, Info, Check, Trash2, Calendar 
+} from "lucide-react";
+
+import { db, BiometricProfile, HistoricalRecord } from "../lib/db";
+import { HeadWireframe } from "../components/HeadWireframes";
+import { ReportCard } from "../components/ReportCard";
+import { RoutineBuilder } from "../components/RoutineBuilder";
+
+// 2. DYNAMIC LAYOUT LOADING: SSR-disabled dynamic import of MeshScanner
+const MeshScanner = dynamic(() => import("../components/MeshScanner"), { ssr: false });
+
+export default function AuraMaxDashboardPage() {
   const [frontImage, setFrontImage] = useState<string | null>(null);
   const [sideImage, setSideImage] = useState<string | null>(null);
   const [closeupImage, setCloseupImage] = useState<string | null>(null);
@@ -18,6 +26,8 @@ export default function App() {
 
   const [skinCondition, setSkinCondition] = useState<string>("combination");
   const [groomingStyle, setGroomingStyle] = useState<string>("stubble");
+  const [hairTexture, setHairTexture] = useState<string>("wavy");
+  const [age, setAge] = useState<number>(28);
 
   const [routine, setRoutine] = useState<any | null>(null);
   const [routineChecks, setRoutineChecks] = useState<string[]>([]);
@@ -39,54 +49,64 @@ export default function App() {
         const historyData = await db.history.orderBy("timestamp").toArray();
         setHistoricalRecords(historyData);
 
-        if (savedProfile) {
+        // Retention & Hydration Map from metricsRecords
+        const savedMetricsRecord = await db.metricsRecords.get("latest");
+
+        if (savedMetricsRecord && savedMetricsRecord.routine) {
+          if (savedProfile) {
+            setFrontImage(savedProfile.frontImage);
+            setSideImage(savedProfile.sideImage);
+            setCloseupImage(savedProfile.closeupImage);
+          }
+          setFaceShape(savedMetricsRecord.faceShape || "Oval");
+          setAsymmetryIndex(parseFloat(((100 - (savedMetricsRecord.symmetryScore || 85)) / 4.5).toFixed(2)) || 3.2);
+          setPostureAngle(savedMetricsRecord.forwardHeadAngle || 14.5);
+          setSkinCondition(savedMetricsRecord.skinCondition || "combination");
+          setGroomingStyle(savedMetricsRecord.groomingStyle || "stubble");
+          setHairTexture(savedMetricsRecord.hairTexture || "wavy");
+          setAge(savedMetricsRecord.age || 28);
+          setRoutine(savedMetricsRecord.routine);
+          setRoutineChecks(savedMetricsRecord.routineChecks || []);
+        } else if (savedProfile) {
           setFrontImage(savedProfile.frontImage);
           setSideImage(savedProfile.sideImage);
           setCloseupImage(savedProfile.closeupImage);
           setFaceShape(savedProfile.faceShape);
-          setAsymmetryIndex(savedProfile.asymmetryIndex);
           setPostureAngle(savedProfile.postureAngle);
           setSkinCondition(savedProfile.skinCondition || "combination");
           setGroomingStyle(savedProfile.groomingStyle || "stubble");
+          setHairTexture("wavy");
+          setAge(28);
           setRoutine(savedProfile.routine);
           setRoutineChecks(savedProfile.routineChecks || []);
-        } else {
-          // Initialize empty profile structure in database if none exists
-          const initialProfile: BiometricProfile = {
-            id: "current_profile",
-            frontImage: null,
-            sideImage: null,
-            closeupImage: null,
-            faceShape: "Oval",
-            asymmetryIndex: 3.2,
-            postureAngle: 14.5,
-            skinCondition: "combination",
-            groomingStyle: "stubble",
-            subscores: { jawline: 82, skin: 80, grooming: 85, symmetry: 86 },
-            currentScore: 83,
-            potentialScore: 94,
-            routine: null,
-            routineChecks: [],
-            lastUpdated: Date.now(),
-          };
-          await db.profiles.add(initialProfile);
         }
       } catch (err) {
-        console.error("Dexie initial recovery error:", err);
+        console.error("Dexie database synchronization failure:", err);
       } finally {
         setIsInitializing(false);
       }
     };
+
     initDatabase();
   }, []);
 
-  // Save changes automatically to IndexedDB to guarantee zero loss of state on page refresh
+  // Sync profile metadata & checks to DB upon modifications
   useEffect(() => {
     if (isInitializing) return;
 
-    const saveToIndexedDB = async () => {
+    const syncToIndexedDB = async () => {
       try {
-        await db.profiles.update("current_profile", {
+        const calculatedSubscores = {
+          jawline: Math.round(Math.max(45, 95 - postureAngle * 1.5)),
+          skin: skinCondition === "congested" ? 62 : skinCondition === "oily" ? 72 : 88,
+          grooming: groomingStyle === "clean-shaven" ? 88 : 82,
+          symmetry: Math.round(Math.max(35, 100 - asymmetryIndex * 4.5)),
+        };
+        const currentScore = Math.round((calculatedSubscores.jawline + calculatedSubscores.skin + calculatedSubscores.grooming + calculatedSubscores.symmetry) / 4);
+        const potentialScore = Math.round((95 + 90 + 92 + 96) / 4);
+
+        await db.profiles.put({
+          id: "current_profile",
           frontImage,
           sideImage,
           closeupImage,
@@ -95,168 +115,157 @@ export default function App() {
           postureAngle,
           skinCondition,
           groomingStyle,
+          subscores: calculatedSubscores,
+          currentScore,
+          potentialScore,
           routine,
           routineChecks,
           lastUpdated: Date.now(),
         });
+
+        const latestRecord = await db.metricsRecords.get("latest");
+        if (latestRecord) {
+          await db.metricsRecords.update("latest", {
+            routineChecks,
+          });
+        }
       } catch (err) {
         console.error("Database auto-update sync error:", err);
       }
     };
 
-    saveToIndexedDB();
-  }, [
-    frontImage,
-    sideImage,
-    closeupImage,
-    faceShape,
-    asymmetryIndex,
-    postureAngle,
-    skinCondition,
-    groomingStyle,
-    routine,
-    routineChecks,
-    isInitializing,
-  ]);
+    const timeout = setTimeout(syncToIndexedDB, 600);
+    return () => clearTimeout(timeout);
+  }, [frontImage, sideImage, closeupImage, faceShape, asymmetryIndex, postureAngle, skinCondition, groomingStyle, routine, routineChecks, isInitializing]);
 
-  // Handle native HTML5 file API base64 parser
-  const handleImageUpload = (angle: "front" | "side" | "closeup", file: File) => {
-    if (!file.type.startsWith("image/")) {
-      alert("Invalid file: strictly upload high-resolution photography files.");
-      return;
-    }
-
+  const handleImageUpload = (type: "front" | "side" | "closeup", file: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => {
-      const base64String = e.target?.result as string;
-      if (angle === "front") setFrontImage(base64String);
-      if (angle === "side") setSideImage(base64String);
-      if (angle === "closeup") setCloseupImage(base64String);
+    reader.onload = () => {
+      const result = reader.result as string;
+      if (type === "front") setFrontImage(result);
+      if (type === "side") setSideImage(result);
+      if (type === "closeup") setCloseupImage(result);
     };
     reader.readAsDataURL(file);
   };
 
-  // Drag and drop event managers
-  const handleDrag = (e: React.DragEvent, angle: "front" | "side" | "closeup", active: boolean) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive((prev) => ({ ...prev, [angle]: active }));
+  const handleClearImage = (type: "front" | "side" | "closeup") => {
+    if (type === "front") setFrontImage(null);
+    if (type === "side") setSideImage(null);
+    if (type === "closeup") setCloseupImage(null);
   };
 
-  const handleDrop = (e: React.DragEvent, angle: "front" | "side" | "closeup") => {
+  const handleDrag = (e: React.DragEvent, type: string, active: boolean) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragActive((prev) => ({ ...prev, [angle]: false }));
+    setDragActive((prev) => ({ ...prev, [type]: active }));
+  };
 
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      handleImageUpload(angle, e.dataTransfer.files[0]);
+  const handleDrop = (e: React.DragEvent, type: "front" | "side" | "closeup") => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive((prev) => ({ ...prev, [type]: false }));
+
+    if (e.dataTransfer.files?.[0]) {
+      handleImageUpload(type, e.dataTransfer.files[0]);
     }
   };
 
-  // Reset current profile images
-  const handleClearImage = (angle: "front" | "side" | "closeup") => {
-    if (angle === "front") setFrontImage(null);
-    if (angle === "side") setSideImage(null);
-    if (angle === "closeup") setCloseupImage(null);
-  };
-
-  // Save history record handler for progress cycle
-  const handleSaveHistory = async (currentScore: number) => {
+  const handleSaveHistory = async (record: HistoricalRecord) => {
     try {
-      const record: HistoricalRecord = {
-        timestamp: Date.now(),
-        score: currentScore,
-        asymmetryIndex,
-        postureAngle,
-        subscores: {
-          jawline: Math.round(Math.max(45, 95 - postureAngle * 1.5)),
-          skin: skinCondition === "congested" ? 62 : skinCondition === "oily" ? 72 : 88,
-          grooming: groomingStyle === "clean-shaven" ? 88 : 82,
-          symmetry: Math.round(Math.max(35, 100 - asymmetryIndex * 4.5)),
-        },
-      };
-
       await db.history.add(record);
-      const updatedHistory = await db.history.orderBy("timestamp").toArray();
-      setHistoricalRecords(updatedHistory);
+      const updated = await db.history.orderBy("timestamp").toArray();
+      setHistoricalRecords(updated);
     } catch (err) {
-      console.error("Failed to record milestone in history:", err);
+      console.error("Failed to append diagnostic session to database log:", err);
     }
   };
 
-  // Reset entire database data to factory settings
-  const handleFactoryReset = async () => {
-    if (confirm("Reset core telemetry and clear all local biometrics databases?")) {
+  const handlePurgeDatabase = async () => {
+    if (confirm("Are you sure you want to permanently clear your local biometric vault?")) {
       await db.profiles.clear();
       await db.history.clear();
-      window.location.reload();
+      await db.metricsRecords.clear();
+      setFrontImage(null);
+      setSideImage(null);
+      setCloseupImage(null);
+      setFaceShape("Oval");
+      setAsymmetryIndex(3.2);
+      setPostureAngle(14.5);
+      setSkinCondition("combination");
+      setGroomingStyle("stubble");
+      setHairTexture("wavy");
+      setAge(28);
+      setRoutine(null);
+      setRoutineChecks([]);
+      setHistoricalRecords([]);
     }
   };
 
   if (isInitializing) {
     return (
-      <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center text-zinc-500">
-        <div className="flex flex-col items-center gap-3">
-          <Cpu className="w-8 h-8 text-emerald-400 animate-pulse" />
-          <p className="font-mono text-xs tracking-widest text-zinc-400">AURAMAX_CORE_REHYDRATION</p>
-          <p className="text-[10px] text-zinc-600 font-sans">Connecting local IndexedDB matrices...</p>
+      <div className="min-h-screen bg-[#050505] text-zinc-400 flex flex-col items-center justify-center p-6">
+        <div className="relative w-16 h-16 mb-4">
+          <div className="absolute inset-0 rounded-full border border-emerald-500/10" />
+          <div className="absolute inset-0 rounded-full border border-emerald-500 border-t-transparent animate-spin" />
         </div>
+        <p className="font-mono text-xs text-zinc-500 tracking-wider">HYDRATING_BIOMETRIC_VAULT...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#050505] text-zinc-300 font-sans p-4 sm:p-6 lg:p-8 flex justify-center selection:bg-emerald-500/20 selection:text-emerald-300">
-      <div className="w-full max-w-7xl flex flex-col gap-8">
+    <div className="min-h-screen bg-[#050505] text-zinc-300 antialiased font-sans pb-16 selection:bg-emerald-500/20 selection:text-emerald-400">
+      
+      {/* HEADER DECORATIVE LINE */}
+      <div className="h-[1px] bg-gradient-to-r from-transparent via-emerald-500/30 to-transparent w-full" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 flex flex-col gap-8">
         
-        {/* UPPER TITLE BAR & HUD STATE */}
-        <header id="auramax-system-header" className="flex flex-col md:flex-row items-start md:items-center justify-between border-b border-white/[0.08] pb-6 gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-1.5">
-              <span className="text-xs font-mono font-bold tracking-widest bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/30">
-                AURAMAX_V1.1
+        {/* UPPER BRAND & CONTROL HUD */}
+        <header className="flex flex-col md:flex-row md:items-end justify-between gap-4 pb-4 border-b border-white/[0.06]">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <h1 className="font-display font-black text-2xl tracking-tight text-white">
+                AURAMAX
+              </h1>
+              <span className="font-mono text-[9px] bg-emerald-950/40 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20">
+                PRO_v2.4
               </span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-              <span className="font-mono text-[9px] text-emerald-400/80 uppercase">LIVE_CELLULAR_CORE</span>
             </div>
-            <h1 className="text-3xl font-black font-mono tracking-tighter text-zinc-100 uppercase">
-              AuraMax <span className="text-emerald-400 font-light text-xl lowercase">/ self-optimization</span>
-            </h1>
-            <p className="text-xs text-zinc-500 mt-1 max-w-xl font-sans">
-              Precision client-side facial analysis, biomechanical alignment, and targeted routine synthesis engine.
+            <p className="text-xs text-zinc-500 max-w-md font-sans">
+              Cyber-luxury bio-aesthetic and cervical-kinesiology calibration matrix.
             </p>
           </div>
 
-          <div className="flex items-center gap-4 bg-zinc-950 p-3 rounded-lg border border-white/[0.06] w-full md:w-auto">
-            <div className="flex items-center gap-2">
-              <HardDrive className="w-4 h-4 text-zinc-500" />
-              <div>
-                <p className="text-[9px] font-mono text-zinc-500 leading-none">DATABASE_INTEGRITY</p>
-                <p className="text-[10px] font-mono text-zinc-300">DEXIE_INDEXEDDB_LOCAL</p>
-              </div>
-            </div>
-            <div className="h-6 w-[1px] bg-white/[0.08]" />
+          <div className="flex items-center gap-3">
             <button
-              onClick={handleFactoryReset}
-              className="ml-auto md:ml-0 text-[10px] font-mono text-red-400/80 hover:text-red-400 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 px-2.5 py-1.5 rounded transition-all"
+              onClick={handlePurgeDatabase}
+              className="px-3 py-1.5 border border-red-500/25 bg-red-950/10 hover:bg-red-500/20 active:bg-red-500/30 text-red-400 rounded-lg text-xs font-mono transition-all flex items-center gap-1.5"
             >
-              FACTORY_RESET
+              <Trash2 className="w-3.5 h-3.5" />
+              PURGE_VAULT
             </button>
+            <div className="bg-zinc-900 border border-white/[0.05] rounded-lg px-3 py-1.5 text-right font-mono text-[10px] text-zinc-500">
+              <span className="text-zinc-400">VAULT: </span>
+              LOCAL_ENCRYPTED
+            </div>
           </div>
         </header>
 
-        {/* FEATURE 1: MULTI-ANGLE DIAGNOSTIC UPLOAD AREA */}
-        <section id="upload-grid-section" className="flex flex-col gap-4">
+        {/* FEATURE 1: MULTI-ANGLE RAW PHOTOGRAPHY VAULT */}
+        <section id="photography-vault-section" className="flex flex-col gap-4">
           <div className="flex items-center gap-1.5">
-            <Upload className="w-4 h-4 text-emerald-400" />
+            <Camera className="w-4 h-4 text-emerald-400" />
             <h2 className="font-mono text-xs font-semibold tracking-wider text-zinc-300">
-              I. DIAGNOSTIC_IMAGE_UPLOAD
+              I. PHOTOGRAPHY_ACQUISITION_VAULT
             </h2>
             <span className="h-[1px] flex-1 bg-white/[0.06]" />
-            <span className="text-[10px] font-mono text-zinc-500">HTML5_LOCAL_STATE</span>
+            <span className="text-[10px] font-mono text-zinc-500">STRICT_LOCAL_MEMORY</span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             
             {/* FRONT PROFILE UPLOAD */}
             <div
@@ -282,7 +291,7 @@ export default function App() {
                     </button>
                   </div>
                   <span className="absolute bottom-2.5 left-2.5 text-[9px] font-mono text-zinc-300 bg-black/85 px-2 py-0.5 rounded border border-white/[0.08]">
-                    FRONT_PROFILE.JPG
+                    FRONT_AXIAL.JPG
                   </span>
                 </>
               ) : (
@@ -294,7 +303,7 @@ export default function App() {
                   <div className="text-center flex flex-col items-center">
                     <label className="cursor-pointer bg-white/[0.03] border border-white/[0.08] hover:bg-white/[0.08] active:bg-white/[0.12] text-zinc-300 px-3 py-1.5 rounded text-xs font-mono transition-all flex items-center gap-1.5">
                       <Camera className="w-3.5 h-3.5" />
-                      FRONT_PROFILE
+                      FRONT_AXIAL
                       <input
                         type="file"
                         accept="image/*"
@@ -422,7 +431,7 @@ export default function App() {
             <span className="text-[10px] font-mono text-zinc-500">478_LANDMARK_GRID</span>
           </div>
 
-          <BiometricScanner
+          <MeshScanner
             frontImage={frontImage}
             sideImage={sideImage}
             closeupImage={closeupImage}
@@ -443,31 +452,31 @@ export default function App() {
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             
-            {/* Skin classification */}
+            {/* Skin health classification */}
             <div className="flex flex-col gap-2">
               <label className="text-[10px] font-mono text-zinc-400">SKIN_HEALTH_CLASSIFICATION</label>
               <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-lg border border-white/[0.05]">
-                {["dry", "oily", "combination", "normal", "congested"].map((type) => (
+                {["dry", "oily", "combination", "normal", "congested"].map((cond) => (
                   <button
-                    key={type}
-                    onClick={() => setSkinCondition(type)}
+                    key={cond}
+                    onClick={() => setSkinCondition(cond)}
                     className={`px-1 py-1.5 text-[9px] font-mono rounded transition-all uppercase ${
-                      skinCondition === type
+                      skinCondition === cond
                         ? "bg-zinc-800 text-emerald-400 font-bold border border-white/[0.05]"
                         : "text-zinc-500 hover:text-zinc-300"
                     }`}
                   >
-                    {type}
+                    {cond}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Grooming Preference */}
+            {/* Aesthetic facial hair */}
             <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-mono text-zinc-400">GROOMING_PREFERENCE_TARGET</label>
+              <label className="text-[10px] font-mono text-zinc-400">FACIAL_HAIR_AESTHETIC</label>
               <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-1 rounded-lg border border-white/[0.05]">
                 {["clean-shaven", "stubble", "beard"].map((style) => (
                   <button
@@ -482,6 +491,44 @@ export default function App() {
                     {style.replace("-", " ")}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            {/* Hair texture */}
+            <div className="flex flex-col gap-2">
+              <label className="text-[10px] font-mono text-zinc-400">HAIR_TEXTURE_PROFILE</label>
+              <div className="grid grid-cols-4 gap-1 bg-zinc-950 p-1 rounded-lg border border-white/[0.05]">
+                {["straight", "wavy", "curly", "coily"].map((texture) => (
+                  <button
+                    key={texture}
+                    onClick={() => setHairTexture(texture)}
+                    className={`px-1 py-1.5 text-[9px] font-mono rounded transition-all uppercase ${
+                      hairTexture === texture
+                        ? "bg-zinc-800 text-emerald-400 font-bold border border-white/[0.05]"
+                        : "text-zinc-500 hover:text-zinc-300"
+                    }`}
+                  >
+                    {texture}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Chronological age */}
+            <div className="flex flex-col gap-2">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-mono text-zinc-400">CHRONOLOGICAL_AGE_DELTA</label>
+                <span className="text-[10px] font-mono text-emerald-400 font-bold">{age}Y</span>
+              </div>
+              <div className="flex items-center gap-4 bg-zinc-950 px-3 py-2 rounded-lg border border-white/[0.05] h-full">
+                <input
+                  type="range"
+                  min="16"
+                  max="75"
+                  value={age}
+                  onChange={(e) => setAge(parseInt(e.target.value))}
+                  className="w-full accent-emerald-500 bg-zinc-800 h-1.5 rounded-lg appearance-none cursor-pointer"
+                />
               </div>
             </div>
 
@@ -526,6 +573,8 @@ export default function App() {
             postureAngle={postureAngle}
             skinCondition={skinCondition}
             groomingStyle={groomingStyle}
+            hairTexture={hairTexture}
+            age={age}
             subscores={{
               jawline: Math.round(Math.max(45, 95 - postureAngle * 1.5)),
               skin: skinCondition === "congested" ? 62 : skinCondition === "oily" ? 72 : 88,

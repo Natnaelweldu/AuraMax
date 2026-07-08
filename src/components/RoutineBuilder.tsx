@@ -1,5 +1,7 @@
 import React, { useState } from "react";
 import { Sparkles, CheckSquare, Square, RefreshCw, Layers, Shield, HelpCircle, Activity } from "lucide-react";
+import { fetchAuraRecommendations } from "../lib/services/apiService";
+import { dbEngine } from "../lib/db";
 
 interface Routine {
   kinesiology: Array<{
@@ -30,6 +32,8 @@ interface RoutineBuilderProps {
   postureAngle: number;
   skinCondition: string;
   groomingStyle: string;
+  hairTexture: string;
+  age: number;
   subscores: {
     jawline: number;
     skin: number;
@@ -42,12 +46,138 @@ interface RoutineBuilderProps {
   onChecksChanged: (checks: string[]) => void;
 }
 
+const SkeletonLoader: React.FC = () => (
+  <div className="space-y-6">
+    <style>{`
+      @keyframes scan {
+        0% { transform: translateY(-100%); }
+        100% { transform: translateY(100%); }
+      }
+      @keyframes shimmer-x {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+      }
+      .animate-scan {
+        animation: scan 2.5s linear infinite;
+      }
+      .animate-shimmer-bg {
+        background: linear-gradient(90deg, #09090b 25%, #27272a 50%, #09090b 75%);
+        background-size: 200% 100%;
+        animation: shimmer-x 1.8s infinite linear;
+      }
+    `}</style>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      
+      {/* COLUMN 1 KINESIOLOGY SKELETON */}
+      <div className="relative bg-[#050505] p-5 rounded-xl border border-white/[0.04] overflow-hidden min-h-[380px] flex flex-col justify-between">
+        {/* Laser scanner effect */}
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-emerald-500/[0.04] to-transparent h-16 w-full animate-scan pointer-events-none" />
+        
+        <div className="w-full">
+          <div className="flex items-center justify-between mb-5 pb-2 border-b border-white/[0.04]">
+            <div className="h-3.5 w-36 bg-zinc-800 rounded animate-shimmer-bg" />
+            <div className="h-3 w-12 bg-zinc-900 rounded" />
+          </div>
+
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="p-3.5 bg-black/40 rounded-lg border border-white/[0.02] flex gap-3">
+                <div className="w-4 h-4 bg-zinc-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
+                <div className="space-y-2.5 w-full">
+                  <div className="h-3 bg-zinc-800 rounded w-1/2 animate-shimmer-bg" />
+                  <div className="space-y-1.5">
+                    <div className="h-2 bg-zinc-900 rounded w-11/12 animate-shimmer-bg" />
+                    <div className="h-2 bg-zinc-900 rounded w-2/3 animate-shimmer-bg" />
+                  </div>
+                  <div className="h-3 bg-zinc-950 rounded w-1/3 mt-2" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* COLUMN 2 DERM BIOCHEMISTRY SKELETON */}
+      <div className="relative bg-[#050505] p-5 rounded-xl border border-white/[0.04] overflow-hidden min-h-[380px] flex flex-col justify-between">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-emerald-500/[0.04] to-transparent h-16 w-full animate-scan pointer-events-none [animation-delay:0.8s]" />
+        
+        <div className="w-full">
+          <div className="flex items-center justify-between mb-5 pb-2 border-b border-white/[0.04]">
+            <div className="h-3.5 w-36 bg-zinc-800 rounded animate-shimmer-bg" />
+            <div className="h-3 w-12 bg-zinc-900 rounded" />
+          </div>
+
+          <div className="space-y-4">
+            {[1, 2].map((i) => (
+              <div key={i} className="p-3.5 bg-black/40 rounded-lg border border-white/[0.02] flex gap-3">
+                <div className="w-4 h-4 bg-zinc-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
+                <div className="space-y-2.5 w-full">
+                  <div className="h-3 bg-zinc-800 rounded w-3/5 animate-shimmer-bg" />
+                  <div className="space-y-1.5">
+                    <div className="h-2 bg-zinc-900 rounded w-full animate-shimmer-bg" />
+                    <div className="h-2 bg-zinc-900 rounded w-4/5 animate-shimmer-bg" />
+                  </div>
+                  <div className="h-2.5 bg-zinc-950 rounded w-1/2 mt-1" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* COLUMN 3 GEOMETRIC GROOMING SKELETON */}
+      <div className="relative bg-[#050505] p-5 rounded-xl border border-white/[0.04] overflow-hidden min-h-[380px] flex flex-col justify-between">
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent via-emerald-500/[0.04] to-transparent h-16 w-full animate-scan pointer-events-none [animation-delay:1.6s]" />
+        
+        <div className="w-full">
+          <div className="flex items-center justify-between mb-5 pb-2 border-b border-white/[0.04]">
+            <div className="h-3.5 w-36 bg-zinc-800 rounded animate-shimmer-bg" />
+            <div className="h-3 w-12 bg-zinc-900 rounded" />
+          </div>
+
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="p-3 bg-black/40 rounded-lg border border-white/[0.02] space-y-1.5">
+                <div className="h-2 w-20 bg-zinc-800 rounded animate-shimmer-bg" />
+                <div className="h-3.5 w-11/12 bg-zinc-900 rounded animate-shimmer-bg" />
+              </div>
+            ))}
+            <div className="p-3 bg-black/40 rounded-lg border border-white/[0.02] space-y-2">
+              <div className="h-2 w-28 bg-zinc-800 rounded" />
+              <div className="h-2 w-11/12 bg-zinc-900 rounded" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    {/* ROW 4 LIFESTYLE SKELETON */}
+    <div className="relative bg-[#050505] p-5 rounded-xl border border-white/[0.04] overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-emerald-500/[0.02] to-transparent h-16 w-full animate-scan pointer-events-none [animation-delay:2.4s]" />
+      
+      <div className="h-3.5 w-48 bg-zinc-800 rounded animate-shimmer-bg mb-4 pb-1 border-b border-white/[0.04]" />
+      
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="flex items-start gap-2.5 p-3.5 bg-black/40 rounded-lg border border-white/[0.02]">
+            <div className="w-3.5 h-3.5 bg-zinc-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
+            <div className="h-2 bg-zinc-900 rounded w-11/12 animate-shimmer-bg mt-1" />
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
+
 export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
   faceShape,
   asymmetryIndex,
   postureAngle,
   skinCondition,
   groomingStyle,
+  hairTexture,
+  age,
   subscores,
   routine,
   routineChecks,
@@ -62,25 +192,39 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
     setErrorMsg(null);
 
     try {
-      const response = await fetch("/api/gemini/routine", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          faceShape,
-          asymmetryIndex,
-          postureAngle,
-          skinCondition,
-          groomingStyle,
-          subscores
-        }),
+      const calculatedSymmetryScore = Math.round(Math.max(35, 100 - asymmetryIndex * 4.5));
+      
+      // 1. FRONTEND SERVICE LAYER: POST to /api/recommendations
+      const data = await fetchAuraRecommendations({
+        faceShape,
+        symmetryScore: calculatedSymmetryScore,
+        forwardHeadAngle: postureAngle,
+        hairTexture,
+        age,
+        skinCondition,
+        groomingStyle,
       });
 
-      if (!response.ok) {
-        throw new Error(`Failed to contact optimization node: ${response.statusText}`);
-      }
+      // 3. DATA PERSISTENCE BINDING: Save recommendations and raw parameters inside IndexedDB via Dexie
+      await dbEngine.metricsRecords.put({
+        id: "latest",
+        timestamp: Date.now(),
+        faceShape,
+        symmetryScore: calculatedSymmetryScore,
+        forwardHeadAngle: postureAngle,
+        hairTexture,
+        age,
+        skinCondition,
+        groomingStyle,
+        subscores,
+        routine: data.routine,
+        routineChecks: [], // Reset checklist values for a brand new routine
+      });
 
-      const data = await response.json();
+      // Update parent component state instantly
+      onChecksChanged([]);
       onRoutineGenerated(data.routine);
+
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || "An unexpected issue occurred during biochemical mapping.");
@@ -140,17 +284,15 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
       )}
 
       {isGenerating && (
-        <div className="py-12 flex flex-col items-center justify-center text-center">
-          <div className="relative w-16 h-16 mb-4">
-            <div className="absolute inset-0 rounded-full border-2 border-emerald-500/10" />
-            <div className="absolute inset-0 rounded-full border-2 border-emerald-400 border-t-transparent animate-spin" />
-            <div className="absolute inset-2 rounded-full border border-emerald-500/20" />
-            <div className="absolute inset-2 rounded-full border border-emerald-500/40 border-b-transparent animate-spin [animation-duration:1s] [animation-direction:reverse]" />
+        <div className="space-y-6">
+          <div className="p-4 bg-emerald-950/20 border border-emerald-500/10 rounded-lg text-center mb-4">
+            <p className="font-mono text-xs text-emerald-400 animate-pulse">OPTIMIZING_BIO_KINESIOLOGY_LAYERS</p>
+            <p className="text-[10px] text-zinc-500 mt-1 max-w-xs mx-auto font-sans">
+              Mapping neural vectors for {faceShape} structural outline, balancing {asymmetryIndex}% asymmetry points and aligning cervical spinal posture.
+            </p>
           </div>
-          <p className="font-mono text-xs text-zinc-300 animate-pulse">OPTIMIZING_BIO_KINESIOLOGY_LAYERS</p>
-          <p className="text-[10px] text-zinc-500 mt-1 max-w-xs font-sans">
-            Mapping neural vectors for {faceShape} structural outline, balancing {asymmetryIndex}% asymmetry points and aligning cervical spinal posture.
-          </p>
+          {/* High-end obsidian and graphite scanning skeleton loaders replacement */}
+          <SkeletonLoader />
         </div>
       )}
 

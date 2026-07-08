@@ -40,14 +40,36 @@ export interface HistoricalRecord {
 class AuraMaxDatabase extends Dexie {
   profiles!: Table<BiometricProfile>;
   history!: Table<HistoricalRecord>;
+  metricsRecords!: Table<{
+    id: string; // e.g. "latest" or timestamp
+    timestamp: number;
+    faceShape: string;
+    symmetryScore: number;
+    forwardHeadAngle: number;
+    hairTexture: string;
+    age: number;
+    skinCondition: string;
+    groomingStyle: string;
+    subscores: {
+      jawline: number;
+      skin: number;
+      grooming: number;
+      symmetry: number;
+    };
+    routine: any;
+    routineChecks: string[];
+  }>;
 
   constructor() {
     super("AuraMaxDatabase");
-    this.version(1).stores({
+    this.version(2).stores({
       profiles: "id",
       history: "++id, timestamp",
+      metricsRecords: "id, timestamp",
     });
   }
 }
 
 export const db = new AuraMaxDatabase();
+export const dbEngine = db;
+
