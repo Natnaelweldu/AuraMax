@@ -1,0 +1,53 @@
+import Dexie, { Table } from "dexie";
+
+export interface BiometricProfile {
+  id?: string; // e.g., 'current_profile'
+  frontImage: string | null;
+  sideImage: string | null;
+  closeupImage: string | null;
+  faceShape: string;
+  asymmetryIndex: number;
+  postureAngle: number;
+  skinCondition: string; // 'dry' | 'oily' | 'combination' | 'normal' | 'congested'
+  groomingStyle: string; // 'clean-shaven' | 'stubble' | 'beard'
+  subscores: {
+    jawline: number;
+    skin: number;
+    grooming: number;
+    symmetry: number;
+  };
+  currentScore: number;
+  potentialScore: number;
+  routine: any | null;
+  routineChecks: string[]; // checklist values checked e.g. ["exercise-0", "active-1"]
+  lastUpdated: number;
+}
+
+export interface HistoricalRecord {
+  id?: number;
+  timestamp: number;
+  score: number;
+  asymmetryIndex: number;
+  postureAngle: number;
+  subscores: {
+    jawline: number;
+    skin: number;
+    grooming: number;
+    symmetry: number;
+  };
+}
+
+class AuraMaxDatabase extends Dexie {
+  profiles!: Table<BiometricProfile>;
+  history!: Table<HistoricalRecord>;
+
+  constructor() {
+    super("AuraMaxDatabase");
+    this.version(1).stores({
+      profiles: "id",
+      history: "++id, timestamp",
+    });
+  }
+}
+
+export const db = new AuraMaxDatabase();

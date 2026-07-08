@@ -1,0 +1,6 @@
+{
+  "name": "AuraMax",
+  "description": "A high-performance client-side self-optimization dashboard offering geometric face mesh scans, asymmetry diagnostics, current vs potential reports, and AI-powered routines.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
