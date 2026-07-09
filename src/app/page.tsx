@@ -11,6 +11,8 @@ import { db, BiometricProfile, HistoricalRecord } from "../lib/db";
 import { HeadWireframe } from "../components/HeadWireframes";
 import { ReportCard } from "../components/ReportCard";
 import { RoutineBuilder } from "../components/RoutineBuilder";
+import { supabase } from "../lib/supabaseClient";
+import AuthGateway from "../components/AuthGateway";
 
 // 2. DYNAMIC LAYOUT LOADING: SSR-disabled dynamic import of MeshScanner
 const MeshScanner = dynamic(() => import("../components/MeshScanner"), { ssr: false });
@@ -42,6 +44,151 @@ export default function AuraMaxDashboardPage() {
   });
 
   const [isInitializing, setIsInitializing] = useState(true);
+  const [session, setSession] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const fetchHistoryFromSupabase = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("biometric_scans")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.warn("Error fetching history from Supabase:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+        return;
+      }
+
+      if (data && data.length > 0) {
+        const mappedRecords: HistoricalRecord[] = data.map((item: any) => {
+          const rawSymmetry = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - item.asymmetry_index * 0.45)).toFixed(1));
+          const rawJawline = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - Math.abs(item.jaw_height_ratio - 0.65) * 12)).toFixed(1));
+          const rawPosture = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - item.tilt_angle * 0.4)).toFixed(1));
+          
+          let rawSkin = 8.8;
+          if (item.skin_condition === "congested") rawSkin = 6.2;
+          else if (item.skin_condition === "oily") rawSkin = 7.2;
+          else if (item.skin_condition === "dry") rawSkin = 7.8;
+          else if (item.skin_condition === "combination") rawSkin = 8.0;
+
+          let rawGrooming = 8.5;
+          if (item.grooming_style === "stubble") rawGrooming = 8.2;
+          else if (item.grooming_style === "clean-shaven") rawGrooming = 8.8;
+          else if (item.grooming_style === "beard") rawGrooming = 8.0;
+
+          const score = item.score || parseFloat(((rawJawline + rawSkin + rawGrooming + rawSymmetry + rawPosture) / 5).toFixed(1));
+
+          return {
+            id: item.id,
+            timestamp: new Date(item.created_at).getTime(),
+            score: score,
+            asymmetryIndex: item.asymmetry_index,
+            postureAngle: item.posture_angle,
+            tiltAngle: item.tilt_angle,
+            jawHeightRatio: item.jaw_height_ratio,
+            subscores: {
+              jawline: Math.round(rawJawline * 10),
+              skin: Math.round(rawSkin * 10),
+              grooming: Math.round(rawGrooming * 10),
+              symmetry: Math.round(rawSymmetry * 10),
+              posture: Math.round(rawPosture * 10),
+            }
+          };
+        });
+        setHistoricalRecords(mappedRecords);
+      }
+    } catch (err) {
+      console.error("Error in fetchHistoryFromSupabase:", err);
+    }
+  };
+
+  const saveScanToSupabase = async () => {
+    if (!session?.user?.id) return;
+    try {
+      const rawSymmetry = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - asymmetryIndex * 0.45)).toFixed(1));
+      const rawJawline = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - Math.abs(jawHeightRatio - 0.65) * 12)).toFixed(1));
+      const rawPosture = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - tiltAngle * 0.4)).toFixed(1));
+      
+      let rawSkin = 8.8;
+      if (skinCondition === "congested") rawSkin = 6.2;
+      else if (skinCondition === "oily") rawSkin = 7.2;
+      else if (skinCondition === "dry") rawSkin = 7.8;
+      else if (skinCondition === "combination") rawSkin = 8.0;
+
+      let rawGrooming = 8.5;
+      if (groomingStyle === "stubble") rawGrooming = 8.2;
+      else if (groomingStyle === "clean-shaven") rawGrooming = 8.8;
+      else if (groomingStyle === "beard") rawGrooming = 8.0;
+
+      const score = parseFloat(((rawJawline + rawSkin + rawGrooming + rawSymmetry + rawPosture) / 5).toFixed(1));
+
+      const scanData = {
+        user_id: session.user.id,
+        face_shape: faceShape,
+        asymmetry_index: asymmetryIndex,
+        posture_angle: postureAngle,
+        tilt_angle: tiltAngle,
+        jaw_height_ratio: jawHeightRatio,
+        skin_condition: skinCondition,
+        grooming_style: groomingStyle,
+        hair_texture: hairTexture,
+        age: age,
+        score: score,
+        created_at: new Date().toISOString()
+      };
+
+      const { error } = await supabase
+        .from("biometric_scans")
+        .insert([scanData]);
+
+      if (error) {
+        console.warn("Error saving scan to Supabase:", {
+          message: error.message,
+          details: error.details,
+          hint: error.hint,
+          code: error.code,
+        });
+      } else {
+        console.log("Successfully saved biometric scan milestone to Supabase");
+        fetchHistoryFromSupabase(session.user.id);
+      }
+    } catch (err) {
+      console.error("Failed to run saveScanToSupabase:", err);
+    }
+  };
+
+  // Check and listen to user session from Supabase
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: activeSession } }) => {
+      setSession(activeSession);
+      setAuthLoading(false);
+      if (activeSession?.user?.id) {
+        fetchHistoryFromSupabase(activeSession.user.id);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, activeSession) => {
+      setSession(activeSession);
+      if (activeSession?.user?.id) {
+        fetchHistoryFromSupabase(activeSession.user.id);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleAuthSuccess = async () => {
+    const { data: { session: activeSession } } = await supabase.auth.getSession();
+    setSession(activeSession);
+  };
 
   // Load and rehydrate all biometric profiles, scores, and routines from Dexie.js
   useEffect(() => {
@@ -227,7 +374,7 @@ export default function AuraMaxDashboardPage() {
     }
   };
 
-  if (isInitializing) {
+  if (authLoading || isInitializing) {
     return (
       <div className="min-h-screen bg-[#050505] text-zinc-400 flex flex-col items-center justify-center p-6">
         <div className="relative w-16 h-16 mb-4">
@@ -237,6 +384,10 @@ export default function AuraMaxDashboardPage() {
         <p className="font-mono text-xs text-zinc-500 tracking-wider">HYDRATING_BIOMETRIC_VAULT...</p>
       </div>
     );
+  }
+
+  if (!session) {
+    return <AuthGateway onAuthSuccess={handleAuthSuccess} />;
   }
 
   return (
@@ -266,15 +417,28 @@ export default function AuraMaxDashboardPage() {
 
           <div className="flex items-center gap-3">
             <button
+              onClick={async () => {
+                await supabase.auth.signOut();
+              }}
+              className="px-3 py-1.5 border border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-400 rounded-lg text-xs font-mono transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              SIGN_OUT
+            </button>
+            <button
               onClick={handlePurgeDatabase}
               className="px-3 py-1.5 border border-red-500/25 bg-red-950/10 hover:bg-red-500/20 active:bg-red-500/30 text-red-400 rounded-lg text-xs font-mono transition-all flex items-center gap-1.5"
             >
               <Trash2 className="w-3.5 h-3.5" />
               PURGE_VAULT
             </button>
-            <div className="bg-zinc-900 border border-white/[0.05] rounded-lg px-3 py-1.5 text-right font-mono text-[10px] text-zinc-500">
-              <span className="text-zinc-400">VAULT: </span>
-              LOCAL_ENCRYPTED
+            <div className="flex flex-col text-right font-mono text-[9px] text-zinc-500 bg-zinc-950 border border-white/[0.05] rounded-lg px-3 py-1.5 gap-0.5">
+              <div>
+                <span className="text-zinc-500">SUBJECT: </span>
+                <span className="text-emerald-400 font-bold">{session?.user?.id?.slice(0, 8)}...</span>
+              </div>
+              <div className="text-[8px] text-zinc-600">
+                {session?.user?.email}
+              </div>
             </div>
           </div>
         </header>
@@ -460,6 +624,7 @@ export default function AuraMaxDashboardPage() {
             frontImage={frontImage}
             sideImage={sideImage}
             closeupImage={closeupImage}
+            userId={session?.user?.id}
             onMetricsChanged={(metrics) => {
               setFaceShape(metrics.faceShape);
               setAsymmetryIndex(metrics.asymmetryIndex);
@@ -467,100 +632,10 @@ export default function AuraMaxDashboardPage() {
               setTiltAngle(metrics.tiltAngle);
               setJawHeightRatio(metrics.jawHeightRatio);
             }}
+            onScanComplete={saveScanToSupabase}
           />
         </section>
 
-        {/* SKIN & GROOMING SELECTIONS OVERLAY */}
-        <section id="lifestyle-selectors-section" className="bg-[#090909] p-5 rounded-xl border border-white/[0.08]">
-          <div className="flex items-center gap-2 mb-4">
-            <Info className="w-4 h-4 text-emerald-400" />
-            <h3 className="font-mono text-xs font-semibold tracking-wider text-zinc-100">
-              BIOMEMBRANE_CLASSIFICATIONS
-            </h3>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            
-            {/* Skin health classification */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-mono text-zinc-400">SKIN_HEALTH_CLASSIFICATION</label>
-              <div className="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-lg border border-white/[0.05]">
-                {["dry", "oily", "combination", "normal", "congested"].map((cond) => (
-                  <button
-                    key={cond}
-                    onClick={() => setSkinCondition(cond)}
-                    className={`px-1 py-1.5 text-[9px] font-mono rounded transition-all uppercase ${
-                      skinCondition === cond
-                        ? "bg-zinc-800 text-emerald-400 font-bold border border-white/[0.05]"
-                        : "text-zinc-500 hover:text-zinc-300"
-                    }`}
-                  >
-                    {cond}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Aesthetic facial hair */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-mono text-zinc-400">FACIAL_HAIR_AESTHETIC</label>
-              <div className="grid grid-cols-3 gap-1 bg-zinc-950 p-1 rounded-lg border border-white/[0.05]">
-                {["clean-shaven", "stubble", "beard"].map((style) => (
-                  <button
-                    key={style}
-                    onClick={() => setGroomingStyle(style)}
-                    className={`px-1 py-1.5 text-[9px] font-mono rounded transition-all uppercase ${
-                      groomingStyle === style
-                        ? "bg-zinc-800 text-emerald-400 font-bold border border-white/[0.05]"
-                        : "text-zinc-500 hover:text-zinc-300"
-                    }`}
-                  >
-                    {style.replace("-", " ")}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Hair texture */}
-            <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-mono text-zinc-400">HAIR_TEXTURE_PROFILE</label>
-              <div className="grid grid-cols-4 gap-1 bg-zinc-950 p-1 rounded-lg border border-white/[0.05]">
-                {["straight", "wavy", "curly", "coily"].map((texture) => (
-                  <button
-                    key={texture}
-                    onClick={() => setHairTexture(texture)}
-                    className={`px-1 py-1.5 text-[9px] font-mono rounded transition-all uppercase ${
-                      hairTexture === texture
-                        ? "bg-zinc-800 text-emerald-400 font-bold border border-white/[0.05]"
-                        : "text-zinc-500 hover:text-zinc-300"
-                    }`}
-                  >
-                    {texture}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Chronological age */}
-            <div className="flex flex-col gap-2">
-              <div className="flex justify-between items-center">
-                <label className="text-[10px] font-mono text-zinc-400">CHRONOLOGICAL_AGE_DELTA</label>
-                <span className="text-[10px] font-mono text-emerald-400 font-bold">{age}Y</span>
-              </div>
-              <div className="flex items-center gap-4 bg-zinc-950 px-3 py-2 rounded-lg border border-white/[0.05] h-full">
-                <input
-                  type="range"
-                  min="16"
-                  max="75"
-                  value={age}
-                  onChange={(e) => setAge(parseInt(e.target.value))}
-                  className="w-full accent-emerald-500 bg-zinc-800 h-1.5 rounded-lg appearance-none cursor-pointer"
-                />
-              </div>
-            </div>
-
-          </div>
-        </section>
 
         {/* FEATURE 3: 100-POINT "CURRENT VS POTENTIAL" REPORT CARD */}
         <section id="report-card-section" className="flex flex-col gap-4">
@@ -615,6 +690,8 @@ export default function AuraMaxDashboardPage() {
             routineChecks={routineChecks}
             onRoutineGenerated={(newRoutine) => setRoutine(newRoutine)}
             onChecksChanged={(newChecks) => setRoutineChecks(newChecks)}
+            userId={session?.user?.id}
+            historicalRecords={historicalRecords}
           />
         </section>
 

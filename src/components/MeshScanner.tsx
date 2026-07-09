@@ -15,6 +15,7 @@ interface MeshScannerProps {
   frontImage: string | null;
   sideImage: string | null;
   closeupImage: string | null;
+  userId?: string;
   onMetricsChanged: (metrics: {
     faceShape: string;
     asymmetryIndex: number;
@@ -22,13 +23,16 @@ interface MeshScannerProps {
     tiltAngle: number;
     jawHeightRatio: number;
   }) => void;
+  onScanComplete?: () => void;
 }
 
 export default function MeshScanner({
   frontImage,
   sideImage,
   closeupImage,
+  userId,
   onMetricsChanged,
+  onScanComplete,
 }: MeshScannerProps) {
   const [isMounted, setIsMounted] = useState(false);
 
@@ -38,6 +42,34 @@ export default function MeshScanner({
 
   useEffect(() => {
     setIsMounted(true);
+
+    if (typeof window !== "undefined") {
+      const originalConsoleError = console.error;
+      console.error = function (...args: any[]) {
+        const message = args.map(arg => {
+          if (arg && typeof arg === "object") {
+            try { return JSON.stringify(arg); } catch { return String(arg); }
+          }
+          return String(arg);
+        }).join(" ");
+
+        if (
+          message.includes("TensorFlow Lite") ||
+          message.includes("XNNPACK") ||
+          message.includes("delegate") ||
+          message.includes("wasm") ||
+          message.includes("MediaPipe") ||
+          message.includes("Supabase") ||
+          message.includes("biometric_scans") ||
+          message.includes("user_routines") ||
+          message.includes("saving scan to Supabase")
+        ) {
+          console.warn(...args);
+          return;
+        }
+        originalConsoleError.apply(console, args);
+      };
+    }
   }, []);
 
   // Initialize MediaPipe Face Landmarker on mount via CDN ES module
@@ -428,6 +460,7 @@ export default function MeshScanner({
     if (!activeImage) return;
     setIsScanning(true);
     setScanProgress(0);
+    let shouldTriggerComplete = true;
 
     // Progressive visual scanbar animation
     const progressInterval = setInterval(() => {
@@ -440,6 +473,23 @@ export default function MeshScanner({
       });
     }, 60);
 
+    if (!faceLandmarker || !imageRef.current) {
+      console.warn("AuraMax ML: faceLandmarker or imageRef is null. Aborting frame detection.");
+      clearInterval(progressInterval);
+      setScanProgress(0);
+      setIsScanning(false);
+      return;
+    }
+
+    // Ensure the HTML image element is completely loaded and has valid dimensions
+    if (imageRef.current instanceof HTMLImageElement && (!imageRef.current.complete || imageRef.current.naturalWidth === 0)) {
+      console.warn("AuraMax ML: Target image element has not fully loaded into the DOM yet.");
+      clearInterval(progressInterval);
+      setScanProgress(0);
+      setIsScanning(false);
+      return;
+    }
+
     try {
       // If the client-side ML Landmarker is loaded, perform a real scan
       if (faceLandmarker && imageRef.current) {
@@ -449,8 +499,22 @@ export default function MeshScanner({
           });
         }
 
-        // Run real MediaPipe Landmarker detection completely in browser!
-        const result = faceLandmarker.detect(imageRef.current);
+        if (!faceLandmarker || !imageRef.current || !imageRef.current.complete || imageRef.current.naturalWidth === 0) {
+          console.warn("MediaPipe Face Landmarker or Image Reference is not ready or fully loaded yet.");
+          clearInterval(progressInterval);
+          setScanProgress(0);
+          setIsScanning(false);
+          shouldTriggerComplete = false;
+          return;
+        }
+
+        // Run real MediaPipe Landmarker detection completely in browser with strict safety guard
+        let result = null;
+        try {
+          result = faceLandmarker.detect(imageRef.current);
+        } catch (detectErr) {
+          console.warn("AuraMax ML: Exception during MediaPipe face detection, falling back to calibration:", detectErr);
+        }
         
         clearInterval(progressInterval);
         setScanProgress(100);
@@ -526,7 +590,12 @@ export default function MeshScanner({
       setScanProgress(100);
       applyAdaptiveShuffle();
     } finally {
-      setTimeout(() => setIsScanning(false), 500);
+      setTimeout(() => {
+        setIsScanning(false);
+        if (shouldTriggerComplete && onScanComplete) {
+          onScanComplete();
+        }
+      }, 500);
     }
   };
 

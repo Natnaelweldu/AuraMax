@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Sparkles, CheckSquare, Square, RefreshCw, Layers, Shield, HelpCircle, Activity } from "lucide-react";
 import { fetchAuraRecommendations } from "../lib/services/apiService";
 import { dbEngine } from "../lib/db";
+import { supabase } from "../lib/supabaseClient";
 
 interface Routine {
   structuralKinesiology: Array<{
@@ -44,6 +45,8 @@ interface RoutineBuilderProps {
   routineChecks: string[]; // List of completed item IDs, e.g., ["ex-0", "active-1"]
   onRoutineGenerated: (routine: Routine) => void;
   onChecksChanged: (checks: string[]) => void;
+  userId?: string;
+  historicalRecords?: any[];
 }
 
 const SkeletonLoader: React.FC = () => (
@@ -183,6 +186,8 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
   routineChecks,
   onRoutineGenerated,
   onChecksChanged,
+  userId,
+  historicalRecords,
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -262,6 +267,18 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
         };
       }
       
+      if (payload && historicalRecords && historicalRecords.length > 0) {
+        payload.historical_scans = historicalRecords.map((r: any) => ({
+          timestamp: r.timestamp,
+          date: new Date(r.timestamp).toISOString(),
+          score: r.score,
+          asymmetry_index: r.asymmetryIndex ?? r.asymmetry_index ?? 4.25,
+          posture_angle: r.postureAngle ?? r.posture_angle ?? 14.5,
+          tilt_angle: r.tiltAngle ?? r.tilt_angle ?? 14.5,
+          jaw_height_ratio: r.jawHeightRatio ?? r.jaw_height_ratio ?? 0.611,
+        }));
+      }
+      
       // 2. ACTIVE FETCH PIPELINE: POST request to /api/recommendations passing complete metrics payload as JSON string
       const response = await fetch("/api/recommendations", {
         method: "POST",
@@ -296,6 +313,33 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
         routine: data.routine,
         routineChecks: [], // Reset checklist values for a brand new routine
       });
+
+      // Save routine to Supabase if user is logged in
+      if (userId) {
+        try {
+          const { error: routineError } = await supabase
+            .from("user_routines")
+            .insert([{
+              user_id: userId,
+              routine: data.routine,
+              subscores: subscores,
+              created_at: new Date().toISOString()
+            }]);
+          
+          if (routineError) {
+            console.warn("Error saving routine to Supabase user_routines:", {
+              message: routineError.message,
+              details: routineError.details,
+              hint: routineError.hint,
+              code: routineError.code,
+            });
+          } else {
+            console.log("Successfully saved routine milestone to Supabase");
+          }
+        } catch (supabaseErr) {
+          console.warn("Supabase insert user_routines exception:", supabaseErr);
+        }
+      }
 
       // Update parent component state instantly
       onChecksChanged([]);

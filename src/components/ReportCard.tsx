@@ -340,30 +340,121 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                 </p>
               </div>
             ) : (
-              <div className="space-y-2 mt-2">
-                {/* Visual sparklines/progress items */}
-                {historicalRecords.slice(-3).reverse().map((rec) => (
-                  <div
-                    key={rec.id || rec.timestamp}
-                    className="flex items-center justify-between p-2 bg-white/[0.01] rounded border border-white/[0.04] text-[10px] font-mono"
-                  >
-                    <span className="text-zinc-500">
-                      {new Date(rec.timestamp).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        year: "2-digit"
-                      })}
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <span className="text-zinc-500">
-                        ASYM: {rec.asymmetryIndex.toFixed(1)}% | PST: {rec.postureAngle.toFixed(1)}°
-                      </span>
-                      <span className="text-emerald-400 font-bold">
-                        {(rec.score > 10 ? rec.score / 10 : rec.score).toFixed(1)} /10
-                      </span>
-                    </div>
+              <div className="space-y-4 mt-2">
+                {/* SVG Chronological Graph */}
+                <div className="w-full h-32 bg-zinc-950/40 rounded border border-white/[0.04] p-2 relative flex flex-col justify-between overflow-hidden">
+                  {/* Subtle Gridlines */}
+                  <div className="absolute inset-x-0 top-1/4 border-b border-white/[0.02] pointer-events-none" />
+                  <div className="absolute inset-x-0 top-2/4 border-b border-white/[0.02] pointer-events-none" />
+                  <div className="absolute inset-x-0 top-3/4 border-b border-white/[0.02] pointer-events-none" />
+                  
+                  <div className="flex-1 w-full relative h-20">
+                    {/* SVG Line & Area Plot */}
+                    {(() => {
+                      const sorted = [...historicalRecords].sort((a, b) => a.timestamp - b.timestamp);
+                      const pointsCount = sorted.length;
+                      
+                      // Normalize scores (which are on 1-10 scale)
+                      const scores = sorted.map(r => r.score > 10 ? r.score / 10 : r.score);
+                      const minScore = Math.max(0, Math.min(...scores) - 0.5);
+                      const maxScore = Math.min(10, Math.max(...scores) + 0.5);
+                      const scoreRange = (maxScore - minScore) || 1;
+
+                      // Map each point to X, Y coordinates inside 100x100 viewBox
+                      const mappedPoints = sorted.map((r, index) => {
+                        const scoreVal = r.score > 10 ? r.score / 10 : r.score;
+                        const x = pointsCount > 1 ? (index / (pointsCount - 1)) * 90 + 5 : 50;
+                        const y = 90 - ((scoreVal - minScore) / scoreRange) * 80;
+                        return { x, y, r, val: scoreVal };
+                      });
+
+                      // Construct the SVG path string
+                      let pathStr = "";
+                      let areaPathStr = "";
+                      if (mappedPoints.length > 0) {
+                        pathStr = `M ${mappedPoints[0].x} ${mappedPoints[0].y}`;
+                        mappedPoints.forEach((p, idx) => {
+                          if (idx > 0) {
+                            pathStr += ` L ${p.x} ${p.y}`;
+                          }
+                        });
+                        
+                        // Close area path under the line
+                        areaPathStr = `${pathStr} L ${mappedPoints[mappedPoints.length - 1].x} 95 L ${mappedPoints[0].x} 95 Z`;
+                      }
+
+                      return (
+                        <svg className="w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+                          <defs>
+                            <linearGradient id="chart-glow" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
+                              <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
+                            </linearGradient>
+                          </defs>
+                          
+                          {/* Area under the path */}
+                          {areaPathStr && (
+                            <path d={areaPathStr} fill="url(#chart-glow)" className="transition-all duration-300" />
+                          )}
+
+                          {/* Line path */}
+                          {pathStr && (
+                            <path d={pathStr} fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300" />
+                          )}
+
+                          {/* Interaction dots */}
+                          {mappedPoints.map((pt, idx) => (
+                            <g key={idx} className="group/dot cursor-pointer">
+                              <circle
+                                cx={pt.x}
+                                cy={pt.y}
+                                r="2.5"
+                                className="fill-emerald-400 stroke-black stroke-[1.5] group-hover/dot:r-4 transition-all duration-200"
+                              />
+                            </g>
+                          ))}
+                        </svg>
+                      );
+                    })()}
                   </div>
-                ))}
+
+                  {/* Dates label track */}
+                  <div className="flex justify-between text-[8px] text-zinc-500 font-mono pt-1 px-1 border-t border-white/[0.02]">
+                    <span>
+                      {new Date(historicalRecords[0].timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    </span>
+                    <span>CHRONOLOGICAL_VELOCITY</span>
+                    <span>
+                      {new Date(historicalRecords[historicalRecords.length - 1].timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Legend list of entries */}
+                <div className="max-h-24 overflow-y-auto space-y-1 pr-1 scrollbar-thin">
+                  {historicalRecords.slice(-3).reverse().map((rec) => (
+                    <div
+                      key={rec.id || rec.timestamp}
+                      className="flex items-center justify-between p-2 bg-white/[0.01] hover:bg-white/[0.02] rounded border border-white/[0.04] text-[10px] font-mono transition-all"
+                    >
+                      <span className="text-zinc-500">
+                        {new Date(rec.timestamp).toLocaleDateString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          year: "2-digit"
+                        })}
+                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="text-zinc-500">
+                          ASYM: {rec.asymmetryIndex.toFixed(1)}% | PST: {rec.postureAngle.toFixed(1)}°
+                        </span>
+                        <span className="text-emerald-400 font-bold">
+                          {(rec.score > 10 ? rec.score / 10 : rec.score).toFixed(1)}/10
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
