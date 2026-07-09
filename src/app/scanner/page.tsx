@@ -81,17 +81,19 @@ export default function ScannerPage() {
   const [draggedPointId, setDraggedPointId] = useState<string | null>(null);
 
   // Dynamic Telemetry State Variables
-  const [faceShape, setFaceShape] = useState("Oval");
-  const [asymmetryIndex, setAsymmetryIndex] = useState(4.25);
-  const [postureAngle, setPostureAngle] = useState(14.5);
-  const [tiltAngle, setTiltAngle] = useState(14.5);
-  const [jawHeightRatio, setJawHeightRatio] = useState(0.611);
+  const [faceShape, setFaceShape] = useState("");
+  const [asymmetryIndex, setAsymmetryIndex] = useState(0);
+  const [postureAngle, setPostureAngle] = useState(0);
+  const [tiltAngle, setTiltAngle] = useState(0);
+  const [jawHeightRatio, setJawHeightRatio] = useState(0);
 
   // Standard static properties loaded from profile during hydration
-  const [skinCondition, setSkinCondition] = useState<string>("combination");
-  const [groomingStyle, setGroomingStyle] = useState<string>("stubble");
-  const [hairTexture, setHairTexture] = useState<string>("straight");
-  const [age, setAge] = useState<number>(21);
+  const [skinCondition, setSkinCondition] = useState<string>("");
+  const [groomingStyle, setGroomingStyle] = useState<string>("");
+  const [hairTexture, setHairTexture] = useState<string>("");
+  const [age, setAge] = useState<number>(0);
+  const [heightCm, setHeightCm] = useState<number>(0);
+  const [weightKg, setWeightKg] = useState<number>(0);
   const [savingRecord, setSavingRecord] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
@@ -140,28 +142,34 @@ export default function ScannerPage() {
           setFrontImage(savedProfile.frontImage || null);
           setSideImage(savedProfile.sideImage || null);
           setCloseupImage(savedProfile.closeupImage || null);
+          setSkinCondition(savedProfile.skinCondition || "");
+          setGroomingStyle(savedProfile.groomingStyle || "");
+          setHairTexture((savedProfile as any).hairTexture || "");
+          setAge((savedProfile as any).age || 0);
+          setHeightCm((savedProfile as any).heightCm || 0);
+          setWeightKg((savedProfile as any).weightKg || 0);
         }
 
         if (savedMetricsRecord) {
-          setFaceShape(savedMetricsRecord.faceShape || "Oval");
-          setPostureAngle(savedMetricsRecord.forwardHeadAngle || 14.5);
-          setSkinCondition(savedMetricsRecord.skinCondition || "combination");
-          setGroomingStyle(savedMetricsRecord.groomingStyle || "stubble");
-          setHairTexture(savedMetricsRecord.hairTexture || "straight");
-          setAge(savedMetricsRecord.age || 21);
+          setFaceShape(savedMetricsRecord.faceShape || "");
+          setPostureAngle(savedMetricsRecord.forwardHeadAngle || 0);
+          setSkinCondition(savedMetricsRecord.skinCondition || "");
+          setGroomingStyle(savedMetricsRecord.groomingStyle || "");
+          setHairTexture(savedMetricsRecord.hairTexture || "");
+          setAge(savedMetricsRecord.age || 0);
           if (savedProfile) {
-            setAsymmetryIndex(savedProfile.asymmetryIndex ?? 4.25);
-            setTiltAngle(savedProfile.tiltAngle ?? 14.5);
-            setJawHeightRatio(savedProfile.jawHeightRatio ?? 0.611);
+            setAsymmetryIndex(savedProfile.asymmetryIndex ?? 0);
+            setTiltAngle(savedProfile.tiltAngle ?? 0);
+            setJawHeightRatio(savedProfile.jawHeightRatio ?? 0);
           }
         } else if (savedProfile) {
-          setFaceShape(savedProfile.faceShape || "Oval");
-          setAsymmetryIndex(savedProfile.asymmetryIndex ?? 4.25);
-          setPostureAngle(savedProfile.postureAngle ?? 14.5);
-          setTiltAngle(savedProfile.tiltAngle ?? 14.5);
-          setJawHeightRatio(savedProfile.jawHeightRatio ?? 0.611);
-          setSkinCondition(savedProfile.skinCondition || "combination");
-          setGroomingStyle(savedProfile.groomingStyle || "stubble");
+          setFaceShape(savedProfile.faceShape || "");
+          setAsymmetryIndex(savedProfile.asymmetryIndex ?? 0);
+          setPostureAngle(savedProfile.postureAngle ?? 0);
+          setTiltAngle(savedProfile.tiltAngle ?? 0);
+          setJawHeightRatio(savedProfile.jawHeightRatio ?? 0);
+          setSkinCondition(savedProfile.skinCondition || "");
+          setGroomingStyle(savedProfile.groomingStyle || "");
         }
       } catch (err) {
         console.error("Dexie database initialization error on scanner page:", err);
@@ -218,13 +226,17 @@ export default function ScannerPage() {
           jawHeightRatio,
           skinCondition,
           groomingStyle,
+          hairTexture,
+          age,
+          heightCm,
+          weightKg,
           subscores: calculatedSubscores,
           currentScore,
           potentialScore,
           routine: existingProfile?.routine ?? null,
           routineChecks: existingProfile?.routineChecks ?? [],
           lastUpdated: Date.now(),
-        });
+        } as any);
       } catch (err) {
         console.error("Database auto-update sync error in scanner:", err);
       }
@@ -232,7 +244,7 @@ export default function ScannerPage() {
 
     const timeout = setTimeout(syncToIndexedDB, 600);
     return () => clearTimeout(timeout);
-  }, [faceShape, asymmetryIndex, postureAngle, skinCondition, groomingStyle, isInitializing, session, jawHeightRatio, tiltAngle, frontImage, sideImage, closeupImage]);
+  }, [faceShape, asymmetryIndex, postureAngle, skinCondition, groomingStyle, hairTexture, age, heightCm, weightKg, isInitializing, session, jawHeightRatio, tiltAngle, frontImage, sideImage, closeupImage]);
 
   // Hardware-accelerated webcam initialization
   useEffect(() => {
@@ -426,7 +438,16 @@ export default function ScannerPage() {
 
   // Math-Engine: Calculates real-time telemetry whenever nodes are moved
   useEffect(() => {
+    const hasFront = !!frontImage;
+    const hasSide = !!sideImage;
+
     if (activeTab === "front") {
+      if (!hasFront) {
+        setFaceShape("");
+        setAsymmetryIndex(0);
+        setJawHeightRatio(0);
+        return;
+      }
       const p = (id: string) => frontPoints.find(pt => pt.id === id) || frontPoints[0];
       const forehead = p("forehead");
       const nose = p("nose_tip");
@@ -479,7 +500,12 @@ export default function ScannerPage() {
 
       const computedJawRatio = parseFloat((jawWidth / faceHeight).toFixed(3));
       setJawHeightRatio(computedJawRatio);
-    } else {
+    } else if (activeTab === "side") {
+      if (!hasSide) {
+        setPostureAngle(0);
+        setTiltAngle(0);
+        return;
+      }
       const p = (id: string) => sidePoints.find(pt => pt.id === id) || sidePoints[0];
       const tragus = p("tragus");
       const acromion = p("acromion");
@@ -493,7 +519,7 @@ export default function ScannerPage() {
       setPostureAngle(angleDeg);
       setTiltAngle(angleDeg);
     }
-  }, [frontPoints, sidePoints, activeTab]);
+  }, [frontPoints, sidePoints, activeTab, frontImage, sideImage]);
 
   // Synchronize activeTab and activeRequirement bidirectionally
   useEffect(() => {
@@ -645,9 +671,18 @@ export default function ScannerPage() {
     }
   };
 
-  // Save calibrated baseline results to database
-  const handleSaveCalibrationRecord = async () => {
-    if (!session?.user?.id) return;
+  // Unified Checklist Completion States
+  const isFrontCaptured = !!frontImage;
+  const isSideCaptured = !!sideImage;
+  const isCloseupCaptured = !!closeupImage;
+  const isBiometricsLoaded = age > 0 && heightCm > 0 && weightKg > 0;
+  const isPhenotypeLoaded = !!hairTexture && !!skinCondition;
+
+  const isChecklistComplete = isFrontCaptured && isSideCaptured && isCloseupCaptured && isBiometricsLoaded && isPhenotypeLoaded;
+
+  // Save calibrated baseline results to database and execute remote AI inference pipeline
+  const handleExecuteScan = async () => {
+    if (!isChecklistComplete) return;
     setSavingRecord(true);
     setSaveStatus(null);
 
@@ -669,30 +704,137 @@ export default function ScannerPage() {
 
       const score = parseFloat(((rawJawline + rawSkin + rawGrooming + rawSymmetry + rawPosture) / 5).toFixed(1));
 
-      const scanData = {
-        user_id: session.user.id,
-        face_shape: faceShape,
-        asymmetry_index: asymmetryIndex,
-        posture_angle: postureAngle,
-        tilt_angle: tiltAngle,
-        jaw_height_ratio: jawHeightRatio,
-        skin_condition: skinCondition,
-        grooming_style: groomingStyle,
-        hair_texture: hairTexture,
-        age: age,
-        score: score,
-        created_at: new Date().toISOString()
+      // Construct global request payload schema matching rules in AGENTS.md
+      const payload = {
+        user_metadata: {
+          age: age,
+          gender: "male",
+          body_metrics: {
+            height_cm: heightCm,
+            weight_kg: weightKg,
+            calculated_bmi: parseFloat((weightKg / ((heightCm / 100) * (heightCm / 100))).toFixed(2)) || 22.8,
+            estimated_body_fat_percentage: 16.2
+          }
+        },
+        craniofacial_geometry: {
+          face_shape_classification: faceShape || "Oval",
+          asymmetry: {
+            raw_index: asymmetryIndex || 4.25,
+            primary_deviation_zone: "balanced",
+            canthal_tilt: "positive"
+          },
+          jaw_and_chin: {
+            structural_type: "Defined/Symmetric",
+            gonial_angle_estimate: 122,
+            submental_fat_storage: "minimal"
+          },
+          facial_proportions: {
+            vertical_thirds_ratio: "1:1.02:0.98",
+            bizygomatic_to_bigonial_ratio: jawHeightRatio || 1.215
+          }
+        },
+        cervicothoracic_posture: {
+          forward_head_posture: {
+            raw_angle_degrees: postureAngle || 14.5,
+            severity_classification: postureAngle < 10 ? "mild" : postureAngle < 18 ? "moderate" : "severe",
+            cervical_spine_strain_index: estimatedCervicalForce || 26.1
+          },
+          shoulder_girdle: {
+            rounded_shoulders: "minimal",
+            scapular_protraction: "minimal"
+          }
+        },
+        dermatology_and_trichology: {
+          skin_profile: {
+            type: skinCondition || "combination",
+            sebum_production: skinCondition === "oily" ? "high" : skinCondition === "dry" ? "low" : "moderate",
+            active_pathologies: [],
+            scarring_type: "none"
+          },
+          hair_profile: {
+            texture_type: hairTexture || "straight",
+            norwood_scale_rating: 1,
+            density: "medium",
+            growth_direction: "forward"
+          }
+        }
       };
 
-      const { error } = await supabase
-        .from("biometric_scans")
-        .insert([scanData]);
+      // Cache calibrated payload in localStorage for pages to access
+      localStorage.setItem("auramax_calibrated_payload", JSON.stringify(payload));
 
-      if (error) {
-        console.warn("Could not push scan record to remote database:", error);
+      // 1. DATA PERSISTENCE BINDING: Save raw biometrics inside IndexedDB via Dexie (with empty/null routine)
+      await db.metricsRecords.put({
+        id: "latest",
+        timestamp: Date.now(),
+        faceShape,
+        symmetryScore: Math.round(rawSymmetry * 10),
+        forwardHeadAngle: postureAngle,
+        hairTexture,
+        age,
+        skinCondition,
+        groomingStyle,
+        subscores: {
+          jawline: Number(rawJawline),
+          skin: Number(rawSkin),
+          grooming: Number(rawGrooming),
+          symmetry: Number(rawSymmetry),
+        },
+        routine: null,
+        routineChecks: [],
+      });
+
+      // 2. Dexie current_profile update
+      await db.profiles.put({
+        id: "current_profile",
+        frontImage: frontImage,
+        sideImage: sideImage,
+        closeupImage: closeupImage,
+        faceShape,
+        asymmetryIndex,
+        postureAngle,
+        tiltAngle,
+        jawHeightRatio,
+        skinCondition,
+        groomingStyle,
+        hairTexture,
+        age,
+        heightCm,
+        weightKg,
+        subscores: {
+          jawline: rawJawline,
+          skin: rawSkin,
+          grooming: rawGrooming,
+          symmetry: rawSymmetry,
+          posture: rawPosture
+        },
+        currentScore: score,
+        potentialScore: 9.5,
+        routine: null,
+        routineChecks: [],
+        lastUpdated: Date.now(),
+      } as any);
+
+      // 3. Cloud Database/Supabase sync
+      if (session?.user?.id) {
+        const scanData = {
+          user_id: session.user.id,
+          face_shape: faceShape,
+          asymmetry_index: asymmetryIndex,
+          posture_angle: postureAngle,
+          tilt_angle: tiltAngle,
+          jaw_height_ratio: jawHeightRatio,
+          skin_condition: skinCondition,
+          grooming_style: groomingStyle,
+          hair_texture: hairTexture,
+          age: age,
+          score: score,
+          created_at: new Date().toISOString()
+        };
+        await supabase.from("biometric_scans").insert([scanData]);
       }
 
-      // Add a physical milestone history entry in Dexie too
+      // 4. Dexie history entry for progress trends
       await db.history.add({
         timestamp: Date.now(),
         score: score,
@@ -709,11 +851,16 @@ export default function ScannerPage() {
         }
       });
 
-      setSaveStatus("SUCCESS: CALIBRATION_COMMITTED");
-      setTimeout(() => setSaveStatus(null), 3000);
+      setSaveStatus("SUCCESS: BIOMETRIC_SCAN_COMMITTED");
+      
+      // Redirect to the Dashboard to generate/view routine
+      setTimeout(() => {
+        router.push("/dashboard");
+      }, 1200);
+
     } catch (err: any) {
       console.error(err);
-      setSaveStatus("ERROR_SYNC_FAILED");
+      setSaveStatus(`ERROR: ${err.message || "SYNC_FAILED"}`);
     } finally {
       setSavingRecord(false);
     }
@@ -732,8 +879,8 @@ export default function ScannerPage() {
   }
 
   // Calculated posture load
-  const estimatedCervicalForce = parseFloat((5.0 + (postureAngle * 0.9)).toFixed(1));
-  const postureStrainIndex = parseFloat((postureAngle / 10).toFixed(2));
+  const estimatedCervicalForce = sideImage ? parseFloat((5.0 + (postureAngle * 0.9)).toFixed(1)) : 0;
+  const postureStrainIndex = sideImage ? parseFloat((postureAngle / 10).toFixed(2)) : 0;
 
   // Visual helper links for SVG front connections
   const renderInteractiveSVGFront = () => {
@@ -1002,64 +1149,6 @@ export default function ScannerPage() {
               </div>
             </div>
             
-            {/* Viewport Router Segment Controller */}
-            <div className="flex items-center justify-between bg-[#12141c]/50 p-1.5 rounded-xl border border-white/[0.05] backdrop-blur-md">
-              <div className="flex gap-1">
-                <button
-                  onClick={() => {
-                    setActiveTab("front");
-                    setActiveRequirement("front");
-                    setIsCalibrating(false);
-                  }}
-                  className={`px-4 py-2 text-xs font-mono rounded-lg transition-all cursor-pointer ${
-                    activeTab === "front"
-                      ? "bg-gradient-to-r from-accent-mint/10 to-accent-mint/20 border border-accent-mint/30 text-accent-mint shadow-[0_0_12px_rgba(20,184,166,0.1)]"
-                      : "text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  I. FRONT_MESH_LANDMARK
-                </button>
-                <button
-                  onClick={() => {
-                    setActiveTab("side");
-                    setActiveRequirement("side");
-                    setIsCalibrating(false);
-                  }}
-                  className={`px-4 py-2 text-xs font-mono rounded-lg transition-all cursor-pointer ${
-                    activeTab === "side"
-                      ? "bg-gradient-to-r from-accent-blue/10 to-accent-blue/20 border border-accent-blue/30 text-accent-blue shadow-[0_0_12px_rgba(59,130,246,0.1)]"
-                      : "text-zinc-500 hover:text-zinc-300"
-                  }`}
-                >
-                  II. LATERAL_ALIGN_POSTURE
-                </button>
-              </div>
-
-              {/* Action Toolbar buttons */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={toggleCalibrationMode}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono tracking-wider border transition-all cursor-pointer ${
-                    isCalibrating
-                      ? "bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20"
-                      : "bg-[#090a0f] border-white/[0.08] text-accent-mint hover:bg-white/[0.02]"
-                  }`}
-                >
-                  {isCalibrating ? (
-                    <>
-                      <Pause className="w-3 h-3" />
-                      UNFREEZE_FEED
-                    </>
-                  ) : (
-                    <>
-                      <Sliders className="w-3 h-3" />
-                      CALIBRATE_NODES
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-
             {/* THE LIVE CANVAS FRAMEWORK */}
             <div 
               ref={containerRef}
@@ -1068,15 +1157,41 @@ export default function ScannerPage() {
               onPointerLeave={handlePointerUp}
               className="relative aspect-video w-full rounded-2xl border border-white/[0.06] bg-[#090a0f] overflow-hidden shadow-2xl group flex items-center justify-center select-none touch-none"
             >
+              {/* Floating UNFREEZE_FEED / FREEZE (CALIBRATE_NODES) button inside the viewport container */}
+              {activeRequirement !== "closeup" && (
+                <div className="absolute top-4 right-4 z-40 pointer-events-auto">
+                  <button
+                    type="button"
+                    onClick={toggleCalibrationMode}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono tracking-wider border shadow-md transition-all cursor-pointer ${
+                      isCalibrating
+                        ? "bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25"
+                        : "bg-zinc-950/80 border-white/[0.08] text-accent-mint hover:bg-zinc-900/90"
+                    }`}
+                  >
+                    {isCalibrating ? (
+                      <>
+                        <Pause className="w-3 h-3 animate-pulse" />
+                        UNFREEZE_FEED
+                      </>
+                    ) : (
+                      <>
+                        <Sliders className="w-3 h-3" />
+                        FREEZE & CALIBRATE
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
               
               {/* Actual Hardware video element */}
-              {scanMode === "webcam" && cameraRequested && !currentImage && (
+              {cameraRequested && (
                 <video
                   ref={videoRef}
                   playsInline
                   muted
                   className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-500 ${
-                    streamActive ? "opacity-75" : "opacity-0"
+                    scanMode === "webcam" && streamActive && !currentImage ? "opacity-75 z-0" : "opacity-0 pointer-events-none -z-10"
                   }`}
                 />
               )}
@@ -1219,7 +1334,7 @@ export default function ScannerPage() {
               />
 
               {/* NODE CALIBRATION INTERACTIVE SVG AND DRAGGABLES */}
-              <div className="absolute inset-0 w-full h-full z-30">
+              <div className="absolute inset-0 w-full h-full z-30 pointer-events-none">
                 {isCalibrating && activeRequirement !== "closeup" && (
                   <>
                     {/* Render active vector networks */}
@@ -1285,10 +1400,217 @@ export default function ScannerPage() {
               </div>
             </div>
 
+            {/* DIAGNOSTIC PROFILE DETAILS FORM */}
+            <div className="bg-[#12141c]/40 border border-white/[0.04] p-4 rounded-xl backdrop-blur-md mt-4">
+              <div className="flex items-center gap-2 pb-2.5 border-b border-white/[0.04] mb-3">
+                <Sliders className="w-3.5 h-3.5 text-accent-mint" />
+                <h4 className="text-[10px] font-mono text-zinc-300 uppercase tracking-wider">
+                  DIAGNOSTIC_METADATA_PROFILE
+                </h4>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-3">
+                {/* Age Input */}
+                <div>
+                  <label className="block text-[8px] font-mono text-zinc-500 uppercase tracking-wider mb-1">
+                    CHRONOLOGICAL_AGE
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="120"
+                    value={age || ""}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? 0 : Number(e.target.value);
+                      setAge(val);
+                    }}
+                    placeholder="0"
+                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Height Input */}
+                <div>
+                  <label className="block text-[8px] font-mono text-zinc-500 uppercase tracking-wider mb-1">
+                    HEIGHT_CM
+                  </label>
+                  <input
+                    type="number"
+                    min="50"
+                    max="250"
+                    value={heightCm || ""}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? 0 : Number(e.target.value);
+                      setHeightCm(val);
+                    }}
+                    placeholder="0"
+                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Weight Input */}
+                <div>
+                  <label className="block text-[8px] font-mono text-zinc-500 uppercase tracking-wider mb-1">
+                    WEIGHT_KG
+                  </label>
+                  <input
+                    type="number"
+                    min="10"
+                    max="300"
+                    value={weightKg || ""}
+                    onChange={(e) => {
+                      const val = e.target.value === "" ? 0 : Number(e.target.value);
+                      setWeightKg(val);
+                    }}
+                    placeholder="0"
+                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
+                  />
+                </div>
+
+                {/* Skin Condition Select */}
+                <div>
+                  <label className="block text-[8px] font-mono text-zinc-500 uppercase tracking-wider mb-1">
+                    SKIN_CONDITION
+                  </label>
+                  <select
+                    value={skinCondition || ""}
+                    onChange={(e) => setSkinCondition(e.target.value)}
+                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-zinc-950"
+                  >
+                    <option value="" disabled>Select Skin Type</option>
+                    <option value="combination">Combination</option>
+                    <option value="dry">Dry</option>
+                    <option value="oily">Oily</option>
+                    <option value="congested">Congested / Acne</option>
+                  </select>
+                </div>
+
+                {/* Grooming Style Select */}
+                <div>
+                  <label className="block text-[8px] font-mono text-zinc-500 uppercase tracking-wider mb-1">
+                    GROOMING_STYLE
+                  </label>
+                  <select
+                    value={groomingStyle || ""}
+                    onChange={(e) => setGroomingStyle(e.target.value)}
+                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-zinc-950"
+                  >
+                    <option value="" disabled>Select Grooming</option>
+                    <option value="clean-shaven">Clean Shaven</option>
+                    <option value="stubble">Stubble</option>
+                    <option value="beard">Full Beard</option>
+                  </select>
+                </div>
+
+                {/* Hair Texture Select */}
+                <div>
+                  <label className="block text-[8px] font-mono text-zinc-500 uppercase tracking-wider mb-1">
+                    HAIR_TEXTURE
+                  </label>
+                  <select
+                    value={hairTexture || ""}
+                    onChange={(e) => setHairTexture(e.target.value)}
+                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-zinc-950"
+                  >
+                    <option value="" disabled>Select Hair Type</option>
+                    <option value="straight">Straight</option>
+                    <option value="wavy">Wavy</option>
+                    <option value="curly">Curly</option>
+                    <option value="coily">Coily</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
           </div>
 
           {/* RIGHT COLUMN: TELEMETRY OUTPUT SIDEBAR */}
           <div className="w-full md:w-[320px] flex flex-col gap-4 shrink-0">
+            
+            {/* PRE-SCAN VALIDATION CHECKLIST */}
+            <div className="bg-[#12141c]/80 border border-white/[0.08] rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-4 shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-accent-mint via-accent-blue to-purple-500" />
+              
+              <div className="flex items-center justify-between pb-3 border-b border-white/[0.04]">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className={`w-4 h-4 ${isChecklistComplete ? "text-accent-mint animate-pulse" : "text-zinc-500"}`} />
+                  <h3 className="font-mono text-xs font-semibold tracking-wider text-white">
+                    PRE_SCAN_CHECKLIST
+                  </h3>
+                </div>
+                <span className={`font-mono text-[9px] px-2 py-0.5 rounded-full ${isChecklistComplete ? "bg-accent-mint/10 text-accent-mint border border-accent-mint/20" : "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"}`}>
+                  {isChecklistComplete ? "READY" : "INCOMPLETE"}
+                </span>
+              </div>
+
+              <ul className="space-y-3">
+                {/* 1. Front View Profile Captured */}
+                <li className="flex items-center justify-between text-[11px] font-sans">
+                  <span className={isFrontCaptured ? "text-zinc-200" : "text-zinc-500"}>
+                    Front View Profile Captured
+                  </span>
+                  {isFrontCaptured ? (
+                    <CheckCircle2 className="w-4 h-4 text-accent-mint animate-pulse" />
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50 shadow-[0_0_8px_rgba(234,179,8,0.3)] animate-pulse inline-block" />
+                  )}
+                </li>
+
+                {/* 2. Lateral Alignment Captured */}
+                <li className="flex items-center justify-between text-[11px] font-sans">
+                  <span className={isSideCaptured ? "text-zinc-200" : "text-zinc-500"}>
+                    Lateral Alignment Captured
+                  </span>
+                  {isSideCaptured ? (
+                    <CheckCircle2 className="w-4 h-4 text-accent-mint animate-pulse" />
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50 shadow-[0_0_8px_rgba(234,179,8,0.3)] animate-pulse inline-block" />
+                  )}
+                </li>
+
+                {/* 3. Close-Up Profile Captured */}
+                <li className="flex items-center justify-between text-[11px] font-sans">
+                  <span className={isCloseupCaptured ? "text-zinc-200" : "text-zinc-500"}>
+                    Close-Up Profile Captured
+                  </span>
+                  {isCloseupCaptured ? (
+                    <CheckCircle2 className="w-4 h-4 text-accent-mint animate-pulse" />
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50 shadow-[0_0_8px_rgba(234,179,8,0.3)] animate-pulse inline-block" />
+                  )}
+                </li>
+
+                {/* 4. Biometric Constants Loaded (Age, Height, Weight) */}
+                <li className="flex items-center justify-between text-[11px] font-sans">
+                  <span className={isBiometricsLoaded ? "text-zinc-200" : "text-zinc-500"}>
+                    Biometric Constants Loaded
+                  </span>
+                  {isBiometricsLoaded ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] text-zinc-400 font-mono">({age}y/{heightCm}cm/{weightKg}kg)</span>
+                      <CheckCircle2 className="w-4 h-4 text-accent-mint" />
+                    </div>
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50 shadow-[0_0_8px_rgba(234,179,8,0.3)] animate-pulse inline-block" />
+                  )}
+                </li>
+
+                {/* 5. Phenotype Context Loaded (Hair Type, Skin Profile) */}
+                <li className="flex items-center justify-between text-[11px] font-sans">
+                  <span className={isPhenotypeLoaded ? "text-zinc-200" : "text-zinc-500"}>
+                    Phenotype Context Loaded
+                  </span>
+                  {isPhenotypeLoaded ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] text-zinc-400 font-mono uppercase">({hairTexture}/{skinCondition})</span>
+                      <CheckCircle2 className="w-4 h-4 text-accent-mint" />
+                    </div>
+                  ) : (
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/20 border border-yellow-500/50 shadow-[0_0_8px_rgba(234,179,8,0.3)] animate-pulse inline-block" />
+                  )}
+                </li>
+              </ul>
+            </div>
             
             {/* Live Telemetry Title */}
             <div className="bg-[#12141c]/60 border border-white/[0.05] rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-4 shadow-xl">
@@ -1310,7 +1632,7 @@ export default function ScannerPage() {
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>FACE_SHAPE</span>
                     <span className="text-accent-mint font-bold uppercase text-xs">
-                      {faceShape}
+                      {frontImage ? faceShape : "N/A"}
                     </span>
                   </div>
                   <p className="text-[10px] text-zinc-500 font-sans leading-snug">
@@ -1323,7 +1645,7 @@ export default function ScannerPage() {
                     <span>ASYMMETRY_INDEX</span>
                     <div className="text-right">
                       <span className="text-accent-mint font-bold text-xs font-mono">
-                        {asymmetryIndex}%
+                        {frontImage ? `${asymmetryIndex}%` : "0%"}
                       </span>
                     </div>
                   </div>
@@ -1332,9 +1654,9 @@ export default function ScannerPage() {
                   <div className="w-full bg-zinc-900 h-1 rounded-full mb-1.5 overflow-hidden">
                     <div 
                       className={`h-full rounded-full transition-all duration-300 ${
-                        asymmetryIndex < 4.0 ? "bg-accent-mint" : asymmetryIndex < 7.5 ? "bg-yellow-500" : "bg-red-500"
+                        frontImage && asymmetryIndex < 4.0 ? "bg-accent-mint" : frontImage && asymmetryIndex < 7.5 ? "bg-yellow-500" : frontImage ? "bg-red-500" : "bg-zinc-800"
                       }`}
-                      style={{ width: `${Math.min(100, asymmetryIndex * 8)}%` }}
+                      style={{ width: `${frontImage ? Math.min(100, asymmetryIndex * 8) : 0}%` }}
                     />
                   </div>
 
@@ -1348,7 +1670,7 @@ export default function ScannerPage() {
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>GONIAL_RATIO</span>
                     <span className="font-mono text-xs text-accent-blue font-bold">
-                      {jawHeightRatio.toFixed(3)}
+                      {frontImage ? jawHeightRatio.toFixed(3) : "0.000"}
                     </span>
                   </div>
                   <p className="text-[10px] text-zinc-500 font-sans leading-snug">
@@ -1369,7 +1691,7 @@ export default function ScannerPage() {
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>FORWARD_TILT</span>
                     <span className="font-mono text-xs text-accent-blue font-bold">
-                      {postureAngle}°
+                      {sideImage ? `${postureAngle}°` : "0°"}
                     </span>
                   </div>
                   <p className="text-[10px] text-zinc-500 font-sans leading-snug">
@@ -1381,7 +1703,7 @@ export default function ScannerPage() {
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>CERVICAL_SPINE_FORCE</span>
                     <span className="font-mono text-xs text-red-400 font-bold">
-                      {estimatedCervicalForce} kg
+                      {sideImage ? `${estimatedCervicalForce} kg` : "0 kg"}
                     </span>
                   </div>
                   
@@ -1389,9 +1711,9 @@ export default function ScannerPage() {
                   <div className="w-full bg-zinc-900 h-1 rounded-full mb-1.5 overflow-hidden">
                     <div 
                       className={`h-full rounded-full transition-all duration-300 ${
-                        postureAngle < 10 ? "bg-accent-mint" : postureAngle < 18 ? "bg-yellow-500" : "bg-red-500"
+                        sideImage && postureAngle < 10 ? "bg-accent-mint" : sideImage && postureAngle < 18 ? "bg-yellow-500" : sideImage ? "bg-red-500" : "bg-zinc-800"
                       }`}
-                      style={{ width: `${Math.min(100, (postureAngle / 30) * 100)}%` }}
+                      style={{ width: `${sideImage ? Math.min(100, (postureAngle / 30) * 100) : 0}%` }}
                     />
                   </div>
 
@@ -1405,7 +1727,7 @@ export default function ScannerPage() {
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>SKELETAL_STRAIN_INDEX</span>
                     <span className="font-mono text-xs text-zinc-300 font-bold">
-                      SSI {postureStrainIndex} / 3.0
+                      SSI {sideImage ? postureStrainIndex.toFixed(2) : "0.00"} / 3.0
                     </span>
                   </div>
                   <p className="text-[10px] text-zinc-500 font-sans leading-snug">
@@ -1417,61 +1739,50 @@ export default function ScannerPage() {
 
               {/* SUBMIT CALIBRATION ACTION BUTTON */}
               <div className="pt-2">
-                {(() => {
-                  const allRequirementsMet = !!frontImage && !!sideImage && !!closeupImage;
-                  return (
+                <button
+                  type="button"
+                  onClick={handleExecuteScan}
+                  disabled={savingRecord || !isChecklistComplete}
+                  className={`w-full font-mono text-[10px] font-bold uppercase tracking-wider py-4 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
+                    isChecklistComplete
+                      ? "bg-gradient-to-r from-accent-mint to-accent-blue text-zinc-950 hover:from-teal-400 hover:to-blue-400 shadow-[0_0_20px_rgba(20,184,166,0.3)] animate-pulse hover:scale-[1.02] active:scale-[0.98]"
+                      : "bg-[#12141c]/60 text-zinc-500 border border-white/[0.04]"
+                  }`}
+                >
+                  {savingRecord ? (
                     <>
-                      <button
-                        type="button"
-                        onClick={handleSaveCalibrationRecord}
-                        disabled={savingRecord || !allRequirementsMet}
-                        className="w-full bg-gradient-to-r from-accent-mint to-accent-blue text-zinc-950 hover:from-teal-400 hover:to-blue-400 font-mono text-[10px] font-bold uppercase tracking-wider py-3.5 px-4 rounded-xl shadow-[0_0_15px_rgba(20,184,166,0.12)] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {!allRequirementsMet ? (
-                          <>
-                            <AlertTriangle className="w-3.5 h-3.5 animate-pulse text-zinc-950" />
-                            AWAITING_3_PHOTOS
-                          </>
-                        ) : savingRecord ? (
-                          <>
-                            <Activity className="w-3.5 h-3.5 animate-spin" />
-                            STORING_RECORDS...
-                          </>
-                        ) : (
-                          <>
-                            <ShieldCheck className="w-3.5 h-3.5" />
-                            COMMIT_CALIBRATION_RECORDS
-                          </>
-                        )}
-                      </button>
-
-                      {!allRequirementsMet && (
-                        <div className="mt-2.5 p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/10 text-left text-yellow-500/80 font-mono text-[9px] tracking-wide leading-relaxed uppercase">
-                          <span className="font-bold text-yellow-500 flex items-center gap-1.5 mb-1">
-                            <AlertTriangle className="w-3 h-3" />
-                            Required Diagnostic Photos Pending:
-                          </span>
-                          <ul className="list-disc pl-3.5 space-y-1 text-zinc-400 font-sans normal-case text-[10px]">
-                            <li className={frontImage ? "text-accent-mint font-mono text-[9px] uppercase list-none flex items-center gap-1" : ""}>
-                              {frontImage ? "✓" : "•"} Step 1: Front Profile Photo {frontImage ? "(Ready)" : "(Required)"}
-                            </li>
-                            <li className={sideImage ? "text-accent-blue font-mono text-[9px] uppercase list-none flex items-center gap-1" : ""}>
-                              {sideImage ? "✓" : "•"} Step 2: Lateral Posture Photo {sideImage ? "(Ready)" : "(Required)"}
-                            </li>
-                            <li className={closeupImage ? "text-purple-400 font-mono text-[9px] uppercase list-none flex items-center gap-1" : ""}>
-                              {closeupImage ? "✓" : "•"} Step 3: Upclose Biometric Photo {closeupImage ? "(Ready)" : "(Required)"}
-                            </li>
-                          </ul>
-                        </div>
-                      )}
+                      <Activity className="w-3.5 h-3.5 animate-spin" />
+                      PROCESSING_ASSESSMENT...
                     </>
-                  );
-                })()}
+                  ) : !isChecklistComplete ? (
+                    <>
+                      <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
+                      CHECKLIST_INCOMPLETE
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-3.5 h-3.5 text-zinc-950" />
+                      EXECUTE_SCAN_&_ASSESSMENT
+                    </>
+                  )}
+                </button>
+
+                {!isChecklistComplete && (
+                  <div className="mt-2.5 p-3 rounded-lg bg-yellow-500/5 border border-yellow-500/10 text-left text-yellow-500/80 font-mono text-[9px] tracking-wide leading-relaxed uppercase">
+                    <span className="font-bold text-yellow-500 flex items-center gap-1.5 mb-1 font-mono">
+                      <AlertTriangle className="w-3 h-3" />
+                      PENDING VERIFICATION CRITERIA
+                    </span>
+                    <p className="text-[10px] text-zinc-400 font-sans normal-case leading-normal">
+                      Please ensure all three diagnostic images are captured/uploaded, and biometric/phenotype metrics are completed in the forms above.
+                    </p>
+                  </div>
+                )}
 
                 {saveStatus && (
                   <div className={`mt-2.5 p-2 rounded-lg text-center font-mono text-[9px] tracking-wider border uppercase transition-all ${
                     saveStatus.startsWith("SUCCESS")
-                      ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-400"
+                      ? "bg-emerald-950/20 border-emerald-500/20 text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.1)]"
                       : "bg-red-950/20 border-red-500/20 text-red-400"
                   }`}>
                     {saveStatus}

@@ -40,6 +40,24 @@ export default function DashboardPage() {
   const [skinCondition, setSkinCondition] = useState("combination");
   const [groomingStyle, setGroomingStyle] = useState("stubble");
 
+  // Additional stats for payload harvest
+  const [faceShape, setFaceShape] = useState("Oval");
+  const [postureAngle, setPostureAngle] = useState(14.5);
+  const [tiltAngle, setTiltAngle] = useState(14.5);
+  const [hairTexture, setHairTexture] = useState("straight");
+  const [age, setAge] = useState(21);
+  const [heightCm, setHeightCm] = useState(178);
+  const [weightKg, setWeightKg] = useState(72);
+  const [frontImage, setFrontImage] = useState<string | null>(null);
+  const [sideImage, setSideImage] = useState<string | null>(null);
+  const [closeupImage, setCloseupImage] = useState<string | null>(null);
+  const [hasRoutine, setHasRoutine] = useState(false);
+
+  // Routine generation state
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [generationStep, setGenerationStep] = useState(0);
+
   // Historical records for graphing
   const [historicalRecords, setHistoricalRecords] = useState<HistoricalRecord[]>([]);
   const [hoveredDot, setHoveredDot] = useState<any>(null);
@@ -207,10 +225,34 @@ export default function DashboardPage() {
         }
       }
 
-      // Rehydrate string values from localProfile if they exist
+      // Rehydrate string and numeric values from localProfile if they exist
       if (localProfile) {
         setSkinCondition(localProfile.skinCondition || "combination");
         setGroomingStyle(localProfile.groomingStyle || "stubble");
+        setFaceShape(localProfile.faceShape || "Oval");
+        setAsymmetryIndex(localProfile.asymmetryIndex || 4.25);
+        setPostureAngle(localProfile.postureAngle || 14.5);
+        setTiltAngle(localProfile.tiltAngle || 14.5);
+        setJawHeightRatio(localProfile.jawHeightRatio || 0.611);
+        setHairTexture(localProfile.hairTexture || "straight");
+        setAge(localProfile.age || 21);
+        setHeightCm(localProfile.heightCm || 178);
+        setWeightKg(localProfile.weightKg || 72);
+        setFrontImage(localProfile.frontImage || null);
+        setSideImage(localProfile.sideImage || null);
+        setCloseupImage(localProfile.closeupImage || null);
+        setHasRoutine(!!localProfile.routine);
+
+        // Prioritize local profile scores if they are fresher than parsedRecords (or if empty)
+        if (localProfile.currentScore) {
+          setCurrentScore(localProfile.currentScore);
+        }
+        if (localProfile.subscores) {
+          setJawlineScore(localProfile.subscores.jawline);
+          setSkinScore(localProfile.subscores.skin);
+          setGroomingScore(localProfile.subscores.grooming);
+          setSymmetryScore(localProfile.subscores.symmetry);
+        }
       }
 
     } catch (err) {
@@ -243,6 +285,176 @@ export default function DashboardPage() {
 
     return () => clearInterval(interval);
   }, [latestScanTimestamp]);
+
+  // Handler to compile the custom 30-day Kinesiology, Biochemistry, and Geometric Style routines
+  const handleGenerateRoutine = async () => {
+    setIsGenerating(true);
+    setGenerationError(null);
+    setGenerationStep(0);
+
+    const stepsInterval = setInterval(() => {
+      setGenerationStep(prev => (prev < 3 ? prev + 1 : prev));
+    }, 1500);
+
+    try {
+      // Calculate BMI
+      const calculatedBmi = parseFloat((weightKg / ((heightCm / 100) * (heightCm / 100))).toFixed(2)) || 22.8;
+
+      // Construct the exact global request payload schema matching rules in AGENTS.md
+      const payload = {
+        user_metadata: {
+          age: age,
+          gender: "male",
+          body_metrics: {
+            height_cm: heightCm,
+            weight_kg: weightKg,
+            calculated_bmi: calculatedBmi,
+            estimated_body_fat_percentage: 16.2
+          }
+        },
+        craniofacial_geometry: {
+          face_shape_classification: faceShape || "Oval",
+          asymmetry: {
+            raw_index: asymmetryIndex || 4.25,
+            primary_deviation_zone: "balanced",
+            canthal_tilt: "positive"
+          },
+          jaw_and_chin: {
+            structural_type: "Defined/Symmetric",
+            gonial_angle_estimate: 122,
+            submental_fat_storage: "minimal"
+          },
+          facial_proportions: {
+            vertical_thirds_ratio: "1:1.02:0.98",
+            bizygomatic_to_bigonial_ratio: jawHeightRatio || 1.215
+          }
+        },
+        cervicothoracic_posture: {
+          forward_head_posture: {
+            raw_angle_degrees: postureAngle || 14.5,
+            severity_classification: postureAngle < 10 ? "mild" : postureAngle < 18 ? "moderate" : "severe",
+            cervical_spine_strain_index: parseFloat((5.0 + (postureAngle * 0.9)).toFixed(1)) || 26.1
+          },
+          shoulder_girdle: {
+            rounded_shoulders: "minimal",
+            scapular_protraction: "minimal"
+          }
+        },
+        dermatology_and_trichology: {
+          skin_profile: {
+            type: skinCondition || "combination",
+            sebum_production: skinCondition === "oily" ? "high" : skinCondition === "dry" ? "low" : "moderate",
+            active_pathologies: [],
+            scarring_type: "none"
+          },
+          hair_profile: {
+            texture_type: hairTexture || "straight",
+            norwood_scale_rating: 1,
+            density: "medium",
+            growth_direction: "forward"
+          }
+        }
+      };
+
+      // Dispatch directly to the remote recommendations endpoint
+      const response = await fetch("/api/recommendations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error(`AuraMax core response failed with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (!data || !data.routine) {
+        throw new Error("Invalid routine response received from AuraMax biometric engine.");
+      }
+
+      // Save routine checks to localStorage immediately on generation
+      localStorage.setItem("auramax_routine_checks", JSON.stringify([]));
+
+      // Cache calibrated payload in localStorage for pages to access
+      localStorage.setItem("auramax_calibrated_payload", JSON.stringify(payload));
+
+      // 1. DATA PERSISTENCE BINDING: Save recommendations inside IndexedDB via Dexie
+      await db.metricsRecords.put({
+        id: "latest",
+        timestamp: Date.now(),
+        faceShape,
+        symmetryScore: Math.round(currentScore * 10),
+        forwardHeadAngle: postureAngle,
+        hairTexture,
+        age,
+        skinCondition,
+        groomingStyle,
+        subscores: {
+          jawline: Number(jawlineScore),
+          skin: Number(skinScore),
+          grooming: Number(groomingScore),
+          symmetry: Number(symmetryScore),
+        },
+        routine: data.routine,
+        routineChecks: [],
+      });
+
+      // 2. Dexie current_profile update
+      await db.profiles.put({
+        id: "current_profile",
+        frontImage,
+        sideImage,
+        closeupImage,
+        faceShape,
+        asymmetryIndex,
+        postureAngle,
+        tiltAngle,
+        jawHeightRatio,
+        skinCondition,
+        groomingStyle,
+        hairTexture,
+        age,
+        heightCm,
+        weightKg,
+        subscores: {
+          jawline: jawlineScore,
+          skin: skinScore,
+          grooming: groomingScore,
+          symmetry: symmetryScore,
+          posture: postureAngle
+        },
+        currentScore,
+        potentialScore,
+        routine: data.routine,
+        routineChecks: [],
+        lastUpdated: Date.now(),
+      } as any);
+
+      // 3. Cloud Database/Supabase sync
+      if (session?.user?.id) {
+        await supabase.from("user_routines").insert([{
+          user_id: session.user.id,
+          routine: data.routine,
+          created_at: new Date().toISOString()
+        }]);
+      }
+
+      setHasRoutine(true);
+      clearInterval(stepsInterval);
+
+      // Redirect directly to Blueprint page
+      router.push("/blueprint");
+
+    } catch (err: any) {
+      console.error("Routine generation core engine failed:", err);
+      setGenerationError(err.message || "ROUTINE_INFERENCE_ENGINE_FAIL");
+      clearInterval(stepsInterval);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   if (authLoading || isInitializing) {
     return (
@@ -389,118 +601,160 @@ export default function DashboardPage() {
         {/* HIGH-CONTRAST BENTO GRID */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
           
-          {/* LEFT BENTO BLOCK (UPPER LAYOUT): MODULE 1: THE HERO STAT */}
-          <div className="lg:col-span-5 bg-[#12141c]/40 border border-white/[0.05] rounded-3xl p-6 flex flex-col justify-between backdrop-blur-xl relative overflow-hidden shadow-2xl">
-            {/* Background cybernetic grid details */}
-            <div className="absolute right-0 top-0 w-44 h-44 bg-teal-500/[0.04] rounded-full blur-3xl pointer-events-none" />
-            <div className="absolute -left-12 -bottom-12 w-48 h-48 bg-blue-500/[0.02] rounded-full blur-3xl pointer-events-none" />
+          {/* LEFT COLUMN: HERO STAT + ACTION BANNER */}
+          <div className="lg:col-span-5 flex flex-col gap-6">
             
-            <div>
-              <div className="flex items-center justify-between pb-4 border-b border-white/[0.04] mb-6">
-                <div className="flex items-center gap-2">
-                  <Cpu className="w-4 h-4 text-teal-400" />
-                  <span className="font-mono text-xs font-semibold tracking-wider text-white">
-                    I. OPTIMIZATION_VECTORS
+            {/* MODULE 1: THE HERO STAT */}
+            <div className="bg-[#12141c]/40 border border-white/[0.05] rounded-3xl p-6 flex flex-col justify-between backdrop-blur-xl relative overflow-hidden shadow-2xl flex-1">
+              {/* Background cybernetic grid details */}
+              <div className="absolute right-0 top-0 w-44 h-44 bg-teal-500/[0.04] rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -left-12 -bottom-12 w-48 h-48 bg-blue-500/[0.02] rounded-full blur-3xl pointer-events-none" />
+              
+              <div>
+                <div className="flex items-center justify-between pb-4 border-b border-white/[0.04] mb-6">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-teal-400" />
+                    <span className="font-mono text-xs font-semibold tracking-wider text-white">
+                      I. OPTIMIZATION_VECTORS
+                    </span>
+                  </div>
+                  <span className="text-[8px] font-mono text-zinc-500 bg-white/[0.03] border border-white/[0.04] px-2 py-0.5 rounded uppercase">
+                    AXIAL_DELTA_TRK
                   </span>
                 </div>
-                <span className="text-[8px] font-mono text-zinc-500 bg-white/[0.03] border border-white/[0.04] px-2 py-0.5 rounded uppercase">
-                  AXIAL_DELTA_TRK
+
+                {/* Circular Gauge Presentation */}
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-4">
+                  <div className="relative w-40 h-40 shrink-0">
+                    <svg viewBox="0 0 140 140" className="w-full h-full rotate-[-90deg]">
+                      <defs>
+                        <linearGradient id="radialGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                          <stop offset="0%" stopColor="#2dd4bf" />
+                          <stop offset="100%" stopColor="#3b82f6" />
+                        </linearGradient>
+                        <filter id="glow-effect">
+                          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+                          <feMerge>
+                            <feMergeNode in="coloredBlur"/>
+                            <feMergeNode in="SourceGraphic"/>
+                          </feMerge>
+                        </filter>
+                      </defs>
+
+                      {/* Circle Background Track */}
+                      <circle
+                        cx="70"
+                        cy="70"
+                        r={radius}
+                        className="stroke-zinc-800/40 fill-none"
+                        strokeWidth="6"
+                        strokeDasharray="4 2"
+                      />
+
+                      {/* Current Optimization Path */}
+                      <circle
+                        cx="70"
+                        cy="70"
+                        r={radius}
+                        className="fill-none"
+                        stroke="url(#radialGradient)"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        strokeDasharray={circumference}
+                        strokeDashoffset={strokeOffset}
+                        filter="url(#glow-effect)"
+                        style={{ transition: "stroke-dashoffset 1s ease-out" }}
+                      />
+
+                      {/* Maximum Potential Ceiling Diamond dot */}
+                      <circle
+                        cx={ceilingX}
+                        cy={ceilingY}
+                        r="4.5"
+                        className="fill-blue-400 stroke-zinc-950 stroke-[1.5] animate-pulse"
+                      />
+                    </svg>
+
+                    {/* Absolute Center Text Overlay */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                      <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest block leading-none">
+                        CURRENT
+                      </span>
+                      <span className="text-3xl font-display font-black tracking-tighter text-white font-mono leading-tight">
+                        {currentPercent}%
+                      </span>
+                      <span className="text-[9px] font-mono bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded px-1.5 py-0.5 block mt-0.5">
+                        +{aestheticDeltaPercent}% DELTA
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Legend details */}
+                  <div className="flex-1 flex flex-col gap-4 self-center font-mono">
+                    <div className="bg-zinc-950/40 border border-white/[0.02] p-3 rounded-xl">
+                      <div className="flex items-center gap-1.5 text-zinc-500 text-[9px] uppercase tracking-wider mb-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-400" />
+                        Current Optimization
+                      </div>
+                      <p className="text-sm font-bold text-zinc-100">{currentPercent}%</p>
+                      <p className="text-[8px] text-zinc-500 font-sans leading-none mt-1">Calculated structural average.</p>
+                    </div>
+
+                    <div className="bg-zinc-950/40 border border-white/[0.02] p-3 rounded-xl">
+                      <div className="flex items-center gap-1.5 text-zinc-500 text-[9px] uppercase tracking-wider mb-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                        Aesthetic Ceiling
+                      </div>
+                      <p className="text-sm font-bold text-zinc-100">{potentialPercent}%</p>
+                      <p className="text-[8px] text-zinc-500 font-sans leading-none mt-1">Maximum bio-potential vector.</p>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              <div className="mt-4 pt-4 border-t border-white/[0.04] text-[10px] text-zinc-500 leading-normal font-sans">
+                *The <span className="text-teal-400 font-mono">DELTA</span> represents the biomechanical headroom unlockable via optimized posture, skin lipid synthesis, and facial development habits.
+              </div>
+            </div>
+
+            {/* PREMIUM HIGH-CONTRAST ACTION BANNER */}
+            <div className="bg-[#12141c]/80 border border-white/[0.08] rounded-3xl p-6 backdrop-blur-xl flex flex-col gap-4 shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-teal-400 via-blue-500 to-indigo-500" />
+              
+              <div className="flex items-center justify-between pb-3 border-b border-white/[0.04]">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-teal-400 animate-pulse" />
+                  <h3 className="font-mono text-xs font-semibold tracking-wider text-white">
+                    BIO_ROUTINE_SYNTHESIZER
+                  </h3>
+                </div>
+                <span className={`font-mono text-[9px] px-2 py-0.5 rounded-full ${hasRoutine ? "bg-teal-500/10 text-teal-400 border border-teal-500/20" : "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"}`}>
+                  {hasRoutine ? "OPTIMIZATION_ACTIVE" : "AWAITING_GENERATION"}
                 </span>
               </div>
 
-              {/* Circular Gauge Presentation */}
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-6 py-4">
-                <div className="relative w-40 h-40 shrink-0">
-                  <svg viewBox="0 0 140 140" className="w-full h-full rotate-[-90deg]">
-                    <defs>
-                      <linearGradient id="radialGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#2dd4bf" />
-                        <stop offset="100%" stopColor="#3b82f6" />
-                      </linearGradient>
-                      <filter id="glow-effect">
-                        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                        <feMerge>
-                          <feMergeNode in="coloredBlur"/>
-                          <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
-                      </filter>
-                    </defs>
+              <p className="text-[11px] text-zinc-400 leading-relaxed font-sans">
+                Compile your custom 30-day Kinesiology, Biochemistry, and Geometric Style routines powered by our core Gemini biometric inference engine.
+              </p>
 
-                    {/* Circle Background Track */}
-                    <circle
-                      cx="70"
-                      cy="70"
-                      r={radius}
-                      className="stroke-zinc-800/40 fill-none"
-                      strokeWidth="6"
-                      strokeDasharray="4 2"
-                    />
-
-                    {/* Current Optimization Path */}
-                    <circle
-                      cx="70"
-                      cy="70"
-                      r={radius}
-                      className="fill-none"
-                      stroke="url(#radialGradient)"
-                      strokeWidth="8"
-                      strokeLinecap="round"
-                      strokeDasharray={circumference}
-                      strokeDashoffset={strokeOffset}
-                      filter="url(#glow-effect)"
-                      style={{ transition: "stroke-dashoffset 1s ease-out" }}
-                    />
-
-                    {/* Maximum Potential Ceiling Diamond dot */}
-                    <circle
-                      cx={ceilingX}
-                      cy={ceilingY}
-                      r="4.5"
-                      className="fill-blue-400 stroke-zinc-950 stroke-[1.5] animate-pulse"
-                    />
-                  </svg>
-
-                  {/* Absolute Center Text Overlay */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                    <span className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest block leading-none">
-                      CURRENT
-                    </span>
-                    <span className="text-3xl font-display font-black tracking-tighter text-white font-mono leading-tight">
-                      {currentPercent}%
-                    </span>
-                    <span className="text-[9px] font-mono bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded px-1.5 py-0.5 block mt-0.5">
-                      +{aestheticDeltaPercent}% DELTA
-                    </span>
-                  </div>
+              {generationError && (
+                <div className="p-2.5 rounded-lg bg-red-950/20 border border-red-500/20 text-red-400 font-mono text-[9px] tracking-wide leading-relaxed uppercase">
+                  ERROR: {generationError}
                 </div>
+              )}
 
-                {/* Legend details */}
-                <div className="flex-1 flex flex-col gap-4 self-center font-mono">
-                  <div className="bg-zinc-950/40 border border-white/[0.02] p-3 rounded-xl">
-                    <div className="flex items-center gap-1.5 text-zinc-500 text-[9px] uppercase tracking-wider mb-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-teal-400" />
-                      Current Optimization
-                    </div>
-                    <p className="text-sm font-bold text-zinc-100">{currentPercent}%</p>
-                    <p className="text-[8px] text-zinc-500 font-sans leading-none mt-1">Calculated structural average.</p>
-                  </div>
-
-                  <div className="bg-zinc-950/40 border border-white/[0.02] p-3 rounded-xl">
-                    <div className="flex items-center gap-1.5 text-zinc-500 text-[9px] uppercase tracking-wider mb-1">
-                      <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
-                      Aesthetic Ceiling
-                    </div>
-                    <p className="text-sm font-bold text-zinc-100">{potentialPercent}%</p>
-                    <p className="text-[8px] text-zinc-500 font-sans leading-none mt-1">Maximum bio-potential vector.</p>
-                  </div>
-                </div>
-              </div>
-
+              <button
+                type="button"
+                onClick={handleGenerateRoutine}
+                disabled={isGenerating}
+                className="w-full bg-gradient-to-r from-teal-400 to-blue-500 text-zinc-950 hover:from-teal-300 hover:to-blue-400 font-mono text-xs font-bold uppercase tracking-wider py-4 px-4 rounded-2xl shadow-[0_0_20px_rgba(20,184,166,0.2)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <Cpu className="w-4 h-4 text-zinc-950" />
+                Generate Optimization Routine
+              </button>
             </div>
 
-            <div className="mt-4 pt-4 border-t border-white/[0.04] text-[10px] text-zinc-500 leading-normal font-sans">
-              *The <span className="text-teal-400 font-mono">DELTA</span> represents the biomechanical headroom unlockable via optimized posture, skin lipid synthesis, and facial development habits.
-            </div>
           </div>
 
           {/* RIGHT BENTO BLOCK (UPPER LAYOUT): MODULE 2: THE FEATURE RATING MATRIX */}
@@ -873,6 +1127,59 @@ export default function DashboardPage() {
         </div>
 
       </div>
+
+      {/* LOADING OVERLAY */}
+      <AnimatePresence>
+        {isGenerating && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center p-6 bg-zinc-950/95 backdrop-blur-xl"
+          >
+            <div className="max-w-md w-full text-center flex flex-col items-center gap-6">
+              {/* Spinning cybernetic loader */}
+              <div className="relative w-24 h-24">
+                <div className="absolute inset-0 rounded-full border-2 border-teal-500/10" />
+                <div className="absolute inset-0 rounded-full border-t-2 border-r-2 border-teal-400 animate-spin" />
+                <div className="absolute inset-4 rounded-full border-2 border-blue-500/10" />
+                <div className="absolute inset-4 rounded-full border-b-2 border-l-2 border-blue-400 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+                <Cpu className="absolute inset-0 m-auto w-8 h-8 text-teal-400 animate-pulse" />
+              </div>
+
+              <div className="space-y-2">
+                <h2 className="text-xl font-display font-black text-white uppercase tracking-tight">
+                  {generationStep === 0 && "INITIATING_BIO_INFERENCE..."}
+                  {generationStep === 1 && "PARSING_CRANIOFACIAL_MESH..."}
+                  {generationStep === 2 && "SYNTHESIZING_AESTHETIC_AXIS..."}
+                  {generationStep === 3 && "GENERATING_CUSTOM_BLUEPRINT..."}
+                </h2>
+                <p className="text-xs font-mono text-zinc-500 uppercase tracking-widest">
+                  {generationStep === 0 && "CONTACTING AURAMAX CORE ENGINES"}
+                  {generationStep === 1 && "MAPPING KINESIOLOGY & JAWLINE TARGETS"}
+                  {generationStep === 2 && "STRUCTURING 30-DAY BIODEVELOPMENT SCHEDULE"}
+                  {generationStep === 3 && "PERSISTING BLUEPRINT RECORD MATRIX"}
+                </p>
+              </div>
+
+              {/* Progress Bar simulation */}
+              <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden border border-white/[0.02]">
+                <motion.div 
+                  className="h-full bg-gradient-to-r from-teal-400 to-blue-500" 
+                  initial={{ width: "0%" }}
+                  animate={{ width: `${(generationStep + 1) * 25}%` }}
+                  transition={{ duration: 1.5, ease: "easeInOut" }}
+                />
+              </div>
+
+              <span className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider animate-pulse">
+                PLEASE_KEEP_TAB_ACTIVE_THIRTY_SECONDS
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
   );
 }
