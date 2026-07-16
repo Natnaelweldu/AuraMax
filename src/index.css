@@ -1,23 +1,111 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
-  --font-display: "Space Grotesk", sans-serif;
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
 
-  --color-primary-bg: #0d0e12;
-  --color-card-fill: #12141c;
-  --color-accent-mint: #14b8a6;
-  --color-accent-blue: #3b82f6;
+  /* Precision-instrument palette. Brass = calibrated/stored data.
+     Phosphor = a live measurement in progress. Not decorative — each
+     accent is reserved for a specific meaning throughout the app. */
+  --color-primary-bg: #15131a;
+  --color-card-fill: #1c1a24;
+  --color-accent-mint: #C9A15A;
+  --color-accent-blue: #52E9D4;
 
-  --shadow-neon-mint: 0 0 15px rgba(20, 184, 166, 0.15);
-  --shadow-neon-blue: 0 0 15px rgba(59, 130, 246, 0.15);
+  --shadow-neon-mint: 0 0 20px rgba(201, 161, 90, 0.14);
+  --shadow-neon-blue: 0 0 20px rgba(82, 233, 212, 0.16);
 }
 
 body {
   background-color: var(--color-primary-bg);
-  color: #d4d4d8;
+  color: #E4DFD6;
   font-family: var(--font-sans);
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------
+   SIGNATURE ELEMENT: the calibration reticle.
+   A hairline corner-bracket frame — like a drafting instrument's
+   calibration marks or a viewfinder reticle — used in place of glow/
+   box-shadow cards. It's the one visual idea this app is built around:
+   everything here is about measuring something precisely.
+   Usage: <div class="reticle"> ... </div>, optionally reticle-live for
+   the phosphor (active-scan) variant.
+--------------------------------------------------------------------- */
+.reticle {
+  position: relative;
+}
+.reticle::before,
+.reticle::after,
+.reticle > .reticle-tl,
+.reticle > .reticle-br {
+  content: "";
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  transition: border-color 0.3s ease, opacity 0.3s ease;
+}
+.reticle::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1.5px solid rgba(201, 161, 90, 0.55);
+  border-left: 1.5px solid rgba(201, 161, 90, 0.55);
+}
+.reticle::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 1.5px solid rgba(201, 161, 90, 0.55);
+  border-right: 1.5px solid rgba(201, 161, 90, 0.55);
+}
+.reticle-live::before,
+.reticle-live::after {
+  border-color: rgba(82, 233, 212, 0.65);
+}
+
+/* Ambient scan sweep for active scanning states only (phosphor). */
+@keyframes scan-sweep {
+  0% { transform: translateY(-100%); opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { transform: translateY(100%); opacity: 0; }
+}
+.animate-scan-sweep {
+  animation: scan-sweep 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes phosphor-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.animate-phosphor-pulse {
+  animation: phosphor-pulse 1.8s ease-in-out infinite;
+}
+
+/* Orchestrated page load-in: children with .reveal-item stagger via
+   inline transition-delay set at the call site (see reveal utility). */
+@keyframes reveal-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.reveal-item {
+  animation: reveal-rise 0.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Fine calibration-grid backdrop, used sparingly behind hero moments. */
+.grid-backdrop {
+  background-image:
+    linear-gradient(rgba(228, 223, 214, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(228, 223, 214, 0.035) 1px, transparent 1px);
+  background-size: 32px 32px;
+}

@@ -24,6 +24,30 @@ export interface BiometricProfile {
   routine: any | null;
   routineChecks: string[]; // checklist values checked e.g. ["exercise-0", "active-1"]
   lastUpdated: number;
+
+  // --- Extended fields consumed by lib/payload.ts's single recommendation-payload builder.
+  // All optional so existing records without them degrade gracefully rather than throwing.
+  age?: number;
+  gender?: string;
+  heightCm?: number;
+  weightKg?: number;
+  estimatedBodyFatPercentage?: number;
+  hairTexture?: string;
+  primaryDeviationZone?: string;
+  canthalTilt?: string;
+  jawStructuralType?: string;
+  verticalThirdsRatio?: string;
+  activePathologies?: string[];
+  scarringTypes?: string[];
+  norwoodScaleRating?: number;
+  density?: string;
+  growthDirection?: string;
+  // Data-quality flags: whether the current front/side metrics came from a real MediaPipe
+  // detection (auto-detect) vs. only ever a manual drag / never-touched default. Surfaced to
+  // both the Gemini payload and the UI so fabricated-looking precision is never presented
+  // as a confirmed measurement.
+  isFrontCalibrated?: boolean;
+  isSideCalibrated?: boolean;
 }
 
 export interface HistoricalRecord {
@@ -68,10 +92,27 @@ class AuraMaxDatabase extends Dexie {
 
   constructor() {
     super("AuraMaxDatabase");
-    this.version(2).stores({
+    // v2 -> v3: purely additive optional fields on `profiles` (see BiometricProfile above).
+    // No index changes required; existing v2 records remain valid without migration.
+    this.version(3).stores({
       profiles: "id",
       history: "++id, timestamp",
       metricsRecords: "id, timestamp",
+    });
+  }
+
+  /**
+   * Atomically writes a scan result across all three tables. Previously these writes
+   * (metricsRecords.put / profiles.put / history.add) ran as independent sequential awaits
+   * with no transaction — a failure partway through (e.g. a slow/offline tab closing mid-save)
+   * could leave `profiles` updated but `history` un-appended, permanently desyncing the
+   * "current" view from the trend chart. This wraps them so they succeed or fail together.
+   */
+  async saveScanResult(profile: BiometricProfile, metricsRecord: any, historyEntry: HistoricalRecord) {
+    return this.transaction("rw", this.profiles, this.history, this.metricsRecords, async () => {
+      await this.metricsRecords.put(metricsRecord);
+      await this.profiles.put(profile);
+      await this.history.add(historyEntry);
     });
   }
 }

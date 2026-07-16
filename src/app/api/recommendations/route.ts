@@ -41,8 +41,12 @@ export async function POST(request: Request) {
 
   let groomingStyle = "stubble";
 
-  // Define dynamic fallback generator
-  const getFallbackRoutine = (sourceLabel: string) => {
+  // Define dynamic fallback generator. Previously this returned only `{source, routine}` with
+  // no machine-readable signal that it's NOT real AI output — the client had no reliable way
+  // to distinguish a genuine Gemini response from this static rule-based one. `ok: false` plus
+  // a `reason` fixes that; every UI consumer must now branch on `ok` and show a visible badge
+  // when it's false (see RoutineBuilder/ReportCard).
+  const getFallbackRoutine = (sourceLabel: string, reason: string) => {
     const faceShapeLower = faceShape.toLowerCase();
     const isRound = faceShapeLower.includes("round");
     const isSquare = faceShapeLower.includes("square");
@@ -65,7 +69,10 @@ export async function POST(request: Request) {
         description: `Pull your head straight back, keeping eyes level, like making a double chin. Reduces forward head load of ${cervicalSpineStrainIndex} lbs equivalent.`,
         frequency: "Daily",
         volume: "3 sets of 12 reps",
-        targetMetrics: `< 12° (Current Angle: ${forwardHeadAngle}°, Severity: ${severityClassification.toUpperCase()})`
+        targetMetrics: "Forward head posture angle",
+        currentValue: forwardHeadAngle,
+        targetValue: 12,
+        unit: "deg",
       },
       {
         title: roundedShoulders !== "minimal" ? "Pectoralis Major Doorway Stretch" : "Prone Cobra Posture Lift",
@@ -74,7 +81,10 @@ export async function POST(request: Request) {
           : "Lie face down, squeeze shoulder blades together and lift upper chest off the floor, rotating thumbs upward.",
         frequency: "Daily, mid-day",
         volume: "3 holds of 30 seconds",
-        targetMetrics: `Shoulder Girdle Correction (Current: ${roundedShoulders.toUpperCase()} roundedness)`
+        targetMetrics: "Shoulder girdle roundedness",
+        currentValue: roundedShoulders === "minimal" ? 0 : 1,
+        targetValue: 0,
+        unit: "severity (0=minimal,1=moderate)",
       },
       {
         title: asymmetryRaw > 4 ? "Asymmetric Mastication Adjustment" : "Symmetric Masseter Release",
@@ -83,7 +93,10 @@ export async function POST(request: Request) {
           : "Use fingers or gua sha to apply firm circular strokes on both masseter muscles to relieve nocturnal clenching.",
         frequency: "With every meal",
         volume: "Conscious 15-minute alignment",
-        targetMetrics: `Midline Deviation Optimization (Asymmetry raw index: ${asymmetryRaw}%)`
+        targetMetrics: "Bilateral asymmetry raw index",
+        currentValue: asymmetryRaw,
+        targetValue: Math.max(0, asymmetryRaw - 1.5),
+        unit: "%",
       }
     ];
 
@@ -122,7 +135,9 @@ export async function POST(request: Request) {
     ];
 
     return {
+      ok: false,
       source: sourceLabel,
+      reason,
       routine: {
         structuralKinesiology,
         skinCondition,
@@ -202,7 +217,7 @@ export async function POST(request: Request) {
     // 3. HARDENED FAILSAFE: Return structured fallback instantly if API key is not defined
     if (!apiKey) {
       console.warn("GEMINI_API_KEY is not defined. Returning offline mode structured fallback routine.");
-      return NextResponse.json(getFallbackRoutine("AuraMax Static Calibration Engine (Offline Mode)"));
+      return NextResponse.json(getFallbackRoutine("AuraMax Static Calibration Engine (Offline Mode)", "GEMINI_API_KEY is not configured on the server."));
     }
 
     // Lazy initialize the Gemini client with appropriate headers
@@ -296,9 +311,12 @@ export async function POST(request: Request) {
                       description: { type: Type.STRING, description: "Detailed step-by-step instructions on form, mechanics, and biomechanics." },
                       frequency: { type: Type.STRING, description: "How often to perform (e.g., Daily, 3x per week)." },
                       volume: { type: Type.STRING, description: "Reps, sets, or duration (e.g., 3 sets of 10, or hold for 30 seconds)." },
-                      targetMetrics: { type: Type.STRING, description: "The bio-objective target, referencing the current metric (e.g., Target: < 12° from current 15.2°)." },
+                      targetMetrics: { type: Type.STRING, description: "Short human-readable label for the bio-objective (e.g., 'Forward head posture angle')." },
+                      currentValue: { type: Type.NUMBER, description: "The user's current measured value for this metric, taken directly from the input data — must not be invented." },
+                      targetValue: { type: Type.NUMBER, description: "The realistic target value for this metric after following this exercise consistently." },
+                      unit: { type: Type.STRING, description: "Unit for currentValue/targetValue (e.g. 'deg', '%', 'ratio')." },
                     },
-                    required: ["title", "description", "frequency", "volume", "targetMetrics"],
+                    required: ["title", "description", "frequency", "volume", "targetMetrics", "currentValue", "targetValue", "unit"],
                   },
                 },
                 dermBiochemistry: {
@@ -350,6 +368,7 @@ export async function POST(request: Request) {
 
     const parsedData = JSON.parse(responseText.trim());
     return NextResponse.json({
+      ok: true,
       source: "AuraMax Biometric AI Engine",
       routine: parsedData.routine,
     });
@@ -357,7 +376,10 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error("AuraMax Recommendations core failed, falling back to static rules:", error);
     return NextResponse.json(
-      getFallbackRoutine("AuraMax Static Calibration Engine (Failsafe Mode)")
+      getFallbackRoutine(
+        "AuraMax Static Calibration Engine (Failsafe Mode)",
+        error?.message ? String(error.message).slice(0, 300) : "Unknown error calling the Gemini API."
+      )
     );
   }
 }

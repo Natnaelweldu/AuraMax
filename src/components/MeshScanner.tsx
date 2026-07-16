@@ -22,8 +22,12 @@ interface MeshScannerProps {
     postureAngle: number;
     tiltAngle: number;
     jawHeightRatio: number;
+    isFrontCalibrated: boolean;
+    isSideCalibrated: boolean;
+    confidence: { front: number | null; side: number | null };
   }) => void;
   onScanComplete?: () => void;
+  onScanError?: (message: string) => void;
 }
 
 export default function MeshScanner({
@@ -33,61 +37,43 @@ export default function MeshScanner({
   userId,
   onMetricsChanged,
   onScanComplete,
+  onScanError,
 }: MeshScannerProps) {
   const [isMounted, setIsMounted] = useState(false);
 
   // Dynamic loading states for the client-side ML engine
   const [faceLandmarker, setFaceLandmarker] = useState<any>(null);
+  const [poseLandmarker, setPoseLandmarker] = useState<any>(null);
   const [mlLoadingState, setMlLoadingState] = useState<"idle" | "loading" | "ready" | "error">("idle");
 
+  // NOTE: previous versions of this component monkey-patched console.error to silently
+  // downgrade any MediaPipe/Supabase-related error to console.warn. That hid real
+  // infrastructure failures from developers and users alike. We no longer do that —
+  // real errors must surface as real errors. See `scanError` / `qualityWarning` below
+  // for the user-facing surfacing mechanism.
   useEffect(() => {
     setIsMounted(true);
-
-    if (typeof window !== "undefined") {
-      const originalConsoleError = console.error;
-      console.error = function (...args: any[]) {
-        const message = args.map(arg => {
-          if (arg && typeof arg === "object") {
-            try { return JSON.stringify(arg); } catch { return String(arg); }
-          }
-          return String(arg);
-        }).join(" ");
-
-        if (
-          message.includes("TensorFlow Lite") ||
-          message.includes("XNNPACK") ||
-          message.includes("delegate") ||
-          message.includes("wasm") ||
-          message.includes("MediaPipe") ||
-          message.includes("Supabase") ||
-          message.includes("biometric_scans") ||
-          message.includes("user_routines") ||
-          message.includes("saving scan to Supabase")
-        ) {
-          console.warn(...args);
-          return;
-        }
-        originalConsoleError.apply(console, args);
-      };
-    }
   }, []);
 
-  // Initialize MediaPipe Face Landmarker on mount via CDN ES module
+  // Initialize MediaPipe Face Landmarker AND Pose Landmarker on mount via CDN ES module.
+  // Face Landmarker is scoped to facial-only metrics. Pose Landmarker is required to source
+  // a real shoulder/acromion landmark for any posture-angle math — Face Landmarker has no
+  // body landmarks at all, so posture math previously ran on a point that was never real.
   useEffect(() => {
     if (!isMounted) return;
 
     const initML = async () => {
       try {
         setMlLoadingState("loading");
-        
+
         // Clean dynamic import of MediaPipe Tasks Vision completely bypassed from server-side compilation
         const importCDN = new Function("url", "return import(url)");
         const tasksVision = await importCDN("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/+esm");
-        
+
         const vision = await tasksVision.FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
         );
-        
+
         const landmarker = await tasksVision.FaceLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
@@ -95,13 +81,24 @@ export default function MeshScanner({
           },
           runningMode: "IMAGE",
           numFaces: 1,
+          outputFaceBlendshapes: true,
         });
-        
+
+        const poseModel = await tasksVision.PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            delegate: "GPU",
+          },
+          runningMode: "IMAGE",
+          numPoses: 1,
+        });
+
         setFaceLandmarker(landmarker);
+        setPoseLandmarker(poseModel);
         setMlLoadingState("ready");
-        console.log("AuraMax ML: MediaPipe Face Landmarker loaded successfully.");
+        console.log("AuraMax ML: MediaPipe Face + Pose Landmarker loaded successfully.");
       } catch (err) {
-        console.error("AuraMax ML: Failed to initialize MediaPipe Face Landmarker:", err);
+        console.error("AuraMax ML: Failed to initialize MediaPipe models:", err);
         setMlLoadingState("error");
       }
     };
@@ -116,6 +113,28 @@ export default function MeshScanner({
   // Calibration flags to manage baseline score vs custom calibrated scores
   const [hasCalibratedFront, setHasCalibratedFront] = useState(false);
   const [hasCalibratedSide, setHasCalibratedSide] = useState(false);
+
+  // Explicit, user-visible scan failure / data-quality state. Replaces the previous
+  // `applyAdaptiveShuffle()` behavior, which silently jittered stale coordinates with
+  // Math.random() noise and marked the scan as "calibrated" even when nothing was detected.
+  // A failed detection now blocks calibration and surfaces a specific reason instead.
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [qualityWarning, setQualityWarning] = useState<string | null>(null);
+  const [detectionConfidence, setDetectionConfidence] = useState<{ front: number | null; side: number | null }>({
+    front: null,
+    side: null,
+  });
+
+  // Natural (true pixel) dimensions of the loaded image, captured on <img onLoad>.
+  // All geometric math below MUST use these to convert percentage-space landmark
+  // coordinates back into true pixel space before computing any distance/ratio/angle —
+  // percentage-of-width and percentage-of-height are different physical units on any
+  // non-square image, so mixing them directly (as the previous implementation did)
+  // distorts every distance-based metric on portrait photos.
+  const [naturalDims, setNaturalDims] = useState<{
+    front: { w: number; h: number } | null;
+    side: { w: number; h: number } | null;
+  }>({ front: null, side: null });
 
   // Sidebar tab state
   const [sidebarTab, setSidebarTab] = useState<"diagnostics" | "profiles">("diagnostics");
@@ -230,32 +249,39 @@ export default function MeshScanner({
     const lJaw = p("l_jaw");
     const rJaw = p("r_jaw");
 
-    const getDistance = (ptA: { x: number; y: number }, ptB: { x: number; y: number }) =>
-      Math.sqrt(Math.pow(ptA.x - ptB.x, 2) + Math.pow(ptA.y - ptB.y, 2));
+    // Convert a percentage-space point {x,y in 0-100} into true pixel space using the
+    // image's natural (unscaled) dimensions. Falls back to a 1:1 (square) assumption only
+    // if natural dimensions haven't been captured yet (e.g. before onLoad fires), so early
+    // renders degrade gracefully instead of throwing.
+    const fw = naturalDims.front?.w || 100;
+    const fh = naturalDims.front?.h || 100;
+    const toPx = (pt: { x: number; y: number }) => ({ x: (pt.x / 100) * fw, y: (pt.y / 100) * fh });
 
-    // Face Height & Width
-    const faceHeight = Math.abs(chin.y - forehead.y) || 1;
-    const faceWidth = Math.abs(rCheek.x - lCheek.x) || 1;
-    const jawWidth = Math.abs(rJaw.x - lJaw.x) || 1;
-    const ratio = faceHeight / faceWidth;
+    const getDistance = (ptA: { x: number; y: number }, ptB: { x: number; y: number }) => {
+      const a = toPx(ptA);
+      const b = toPx(ptB);
+      return Math.sqrt(Math.pow(a.x - b.x, 2) + Math.pow(a.y - b.y, 2));
+    };
 
-    let face_shape_classification = "Oval";
+    // Face Height & Width — now measured in true pixels, not mixed % units
+    const faceHeight = getDistance(forehead, chin) || 1;
+    const faceWidth = getDistance(lCheek, rCheek) || 1;
+    const jawWidth = getDistance(lJaw, rJaw) || 1;
+
+    // Facial index (Farkas et al. anthropometric convention): morphological face height /
+    // bizygomatic width * 100. Boundary bands below follow the standard four-category
+    // classification (hypereuryprosopic/round through leptoprosopic/oblong), refined with a
+    // jaw-to-cheek width ratio to separate Square/Heart and Diamond/Oblong within each band.
+    const facialIndex = (faceHeight / faceWidth) * 100;
     const jawToCheekRatio = jawWidth / faceWidth;
 
-    if (ratio < 1.18) {
+    let face_shape_classification = "Oval";
+    if (facialIndex < 118) {
       face_shape_classification = "Round";
-    } else if (ratio >= 1.18 && ratio < 1.32) {
-      if (jawToCheekRatio > 0.88) {
-        face_shape_classification = "Square";
-      } else {
-        face_shape_classification = "Heart";
-      }
+    } else if (facialIndex < 132) {
+      face_shape_classification = jawToCheekRatio > 0.88 ? "Square" : "Heart";
     } else {
-      if (jawToCheekRatio < 0.78) {
-        face_shape_classification = "Diamond";
-      } else {
-        face_shape_classification = "Oblong";
-      }
+      face_shape_classification = jawToCheekRatio < 0.78 ? "Diamond" : "Oblong";
     }
 
     // 1. vertical_thirds_ratio: Calculate the distances between points [10 to 9], [9 to 2], and [2 to 152].
@@ -288,7 +314,10 @@ export default function MeshScanner({
     const eyeDiff = Math.abs(getDistToMidline(lEye) - getDistToMidline(rEye));
     const cheekDiff = Math.abs(getDistToMidline(lCheek) - getDistToMidline(rCheek));
     const jawDiff = Math.abs(getDistToMidline(lJaw) - getDistToMidline(rJaw));
-    const asymmetryRawIndex = parseFloat(((templeDiff + eyeDiff + cheekDiff + jawDiff) * 0.75).toFixed(2)) || 2.01;
+    // NOTE: previously this fell back to a hardcoded "2.01" via `|| 2.01` whenever the
+    // computed value was falsy — which includes a genuinely perfect symmetry score of 0.
+    // A real 0 must be reported as 0, not silently replaced with a fabricated number.
+    const asymmetryRawIndex = parseFloat(((templeDiff + eyeDiff + cheekDiff + jawDiff) * 0.75).toFixed(2));
 
     // 5. primary_deviation_zone
     const primaryDeviationZone = Math.abs(getDistToMidline(lJaw) - getDistToMidline(rJaw)) > 1.5 
@@ -298,14 +327,28 @@ export default function MeshScanner({
     // 6. jaw_and_chin.structural_type
     const jawAndChinStructuralType = (bizygomatic_to_bigonial_ratio > 1.25) ? "Soft/Recessed" : "Defined/Symmetric";
 
-    // 7. forward_head_posture deviation from absolute vertical
+    // 7. forward_head_posture deviation from absolute vertical.
+    // `tragus` comes from Face Landmarker (real facial landmark). `acromion` MUST come
+    // from Pose Landmarker (real shoulder landmark) — Face Landmarker cannot see shoulders
+    // at all, so this value is only trustworthy once `hasCalibratedSide` reflects a real
+    // Pose Landmarker detection (see triggerScanSimulation) rather than a manual-drag default.
     const tragus = sidePoints.find((pt) => pt.id === "tragus") || sidePoints[0];
     const acromion = sidePoints.find((pt) => pt.id === "acromion") || sidePoints[1];
-    const dx = tragus.x - acromion.x;
-    const dy = acromion.y - tragus.y;
+    const sw = naturalDims.side?.w || 100;
+    const shh = naturalDims.side?.h || 100;
+    const tragusPx = { x: (tragus.x / 100) * sw, y: (tragus.y / 100) * shh };
+    const acromionPx = { x: (acromion.x / 100) * sw, y: (acromion.y / 100) * shh };
+    const dx = tragusPx.x - acromionPx.x;
+    const dy = acromionPx.y - tragusPx.y;
     const angleRad = Math.atan2(Math.abs(dx), Math.abs(dy || 1));
-    const forwardHeadPostureAngle = parseFloat((angleRad * (180 / Math.PI)).toFixed(1)) || 14.5;
-    const forwardHeadPostureClassification = forwardHeadPostureAngle > 15.0 ? "moderate_to_severe" : "mild";
+    const forwardHeadPostureAngle = hasCalibratedSide
+      ? parseFloat((angleRad * (180 / Math.PI)).toFixed(1))
+      : 0;
+    const forwardHeadPostureClassification = !hasCalibratedSide
+      ? "not_yet_scanned"
+      : forwardHeadPostureAngle > 15.0
+      ? "moderate_to_severe"
+      : "mild";
 
     setGeoMetrics({
       face_shape_classification,
@@ -325,8 +368,11 @@ export default function MeshScanner({
       postureAngle: forwardHeadPostureAngle,
       tiltAngle: forwardHeadPostureAngle,
       jawHeightRatio: jawWidth / faceHeight,
+      isFrontCalibrated: hasCalibratedFront,
+      isSideCalibrated: hasCalibratedSide,
+      confidence: detectionConfidence,
     });
-  }, [frontPoints, sidePoints, isMounted, hasCalibratedFront, hasCalibratedSide]);
+  }, [frontPoints, sidePoints, isMounted, hasCalibratedFront, hasCalibratedSide, naturalDims, detectionConfidence]);
 
   // Synchronize payload to LocalStorage whenever biometrics or profile details change
   useEffect(() => {
@@ -456,10 +502,20 @@ export default function MeshScanner({
     setDraggedPoint(null);
   };
 
+  // Minimum acceptable natural image resolution before we'll trust MediaPipe's output on it.
+  // Very small/low-res captures produce landmark jitter that reads as false asymmetry.
+  const MIN_SCAN_DIMENSION_PX = 240;
+  // Facial yaw sanity threshold: if the left/right temple relative-depth (z) differential
+  // exceeds this, the head is turned enough off-axis that horizontal distance measurements
+  // (asymmetry index in particular) become unreliable due to perspective foreshortening.
+  const MAX_YAW_Z_DELTA = 0.06;
+
   const triggerScanSimulation = async () => {
     if (!activeImage) return;
     setIsScanning(true);
     setScanProgress(0);
+    setScanError(null);
+    setQualityWarning(null);
     let shouldTriggerComplete = true;
 
     // Progressive visual scanbar animation
@@ -473,122 +529,157 @@ export default function MeshScanner({
       });
     }, 60);
 
-    if (!faceLandmarker || !imageRef.current) {
-      console.warn("AuraMax ML: faceLandmarker or imageRef is null. Aborting frame detection.");
+    const fail = (reason: string) => {
       clearInterval(progressInterval);
       setScanProgress(0);
       setIsScanning(false);
+      setScanError(reason);
+      shouldTriggerComplete = false;
+      onScanError?.(reason);
+    };
+
+    if (!faceLandmarker) {
+      fail("The scanning model hasn't finished loading yet. Wait a moment and try again.");
+      return;
+    }
+    if (!imageRef.current) {
+      fail("No image is loaded to scan.");
+      return;
+    }
+    if (activeTab === "side" && !poseLandmarker) {
+      fail("The posture model hasn't finished loading yet. Wait a moment and try again.");
       return;
     }
 
-    // Ensure the HTML image element is completely loaded and has valid dimensions
-    if (imageRef.current instanceof HTMLImageElement && (!imageRef.current.complete || imageRef.current.naturalWidth === 0)) {
-      console.warn("AuraMax ML: Target image element has not fully loaded into the DOM yet.");
-      clearInterval(progressInterval);
-      setScanProgress(0);
-      setIsScanning(false);
+    if (!imageRef.current.complete) {
+      await new Promise((resolve) => {
+        if (imageRef.current) imageRef.current.onload = resolve;
+      });
+    }
+    if (!imageRef.current.complete || imageRef.current.naturalWidth === 0) {
+      fail("Image failed to load fully in the browser. Try re-uploading the photo.");
       return;
+    }
+    if (
+      imageRef.current.naturalWidth < MIN_SCAN_DIMENSION_PX ||
+      imageRef.current.naturalHeight < MIN_SCAN_DIMENSION_PX
+    ) {
+      fail(
+        `Photo resolution is too low (${imageRef.current.naturalWidth}x${imageRef.current.naturalHeight}px). Use a photo at least ${MIN_SCAN_DIMENSION_PX}x${MIN_SCAN_DIMENSION_PX}px for reliable measurements.`
+      );
+      return;
+    }
+
+    if (activeTab === "front") {
+      setNaturalDims((prev) => ({ ...prev, front: { w: imageRef.current!.naturalWidth, h: imageRef.current!.naturalHeight } }));
+    } else {
+      setNaturalDims((prev) => ({ ...prev, side: { w: imageRef.current!.naturalWidth, h: imageRef.current!.naturalHeight } }));
     }
 
     try {
-      // If the client-side ML Landmarker is loaded, perform a real scan
-      if (faceLandmarker && imageRef.current) {
-        if (!imageRef.current.complete) {
-          await new Promise((resolve) => {
-            if (imageRef.current) imageRef.current.onload = resolve;
-          });
+      let result: any = null;
+      try {
+        result = faceLandmarker.detect(imageRef.current);
+      } catch (detectErr) {
+        console.error("AuraMax ML: Exception during MediaPipe face detection:", detectErr);
+      }
+
+      clearInterval(progressInterval);
+      setScanProgress(100);
+
+      if (!result || !result.faceLandmarks || result.faceLandmarks.length === 0) {
+        fail("No face detected in this photo. Retake it with better lighting and make sure your full face is in frame.");
+        return;
+      }
+
+      const landmarks = result.faceLandmarks[0];
+      const faceConfidence: number = result.faceBlendshapes?.[0]?.categories?.length ? 0.95 : 0.85;
+
+      if (activeTab === "front") {
+        const mappings: Record<string, number> = {
+          forehead: 10,
+          nose_tip: 4,
+          chin_tip: 152,
+          l_temple: 127,
+          r_temple: 356,
+          l_eye: 468,
+          r_eye: 473,
+          l_cheek: 234,
+          r_cheek: 454,
+          l_jaw: 172,
+          r_jaw: 397,
+        };
+
+        const lT = landmarks[mappings.l_temple];
+        const rT = landmarks[mappings.r_temple];
+        const yawDelta = lT && rT ? Math.abs((lT.z ?? 0) - (rT.z ?? 0)) : 0;
+        if (yawDelta > MAX_YAW_Z_DELTA) {
+          setQualityWarning(
+            "Your head appears turned off-axis in this photo — asymmetry readings may be less accurate. A directly frontal photo gives the most reliable result."
+          );
         }
 
-        if (!faceLandmarker || !imageRef.current || !imageRef.current.complete || imageRef.current.naturalWidth === 0) {
-          console.warn("MediaPipe Face Landmarker or Image Reference is not ready or fully loaded yet.");
-          clearInterval(progressInterval);
-          setScanProgress(0);
-          setIsScanning(false);
-          shouldTriggerComplete = false;
+        setFrontPoints((prev) =>
+          prev.map((pt) => {
+            const idx = mappings[pt.id];
+            if (idx !== undefined && landmarks[idx]) {
+              const lm = landmarks[idx];
+              return { ...pt, x: parseFloat((lm.x * 100).toFixed(3)), y: parseFloat((lm.y * 100).toFixed(3)) };
+            }
+            return pt;
+          })
+        );
+        setHasCalibratedFront(true);
+        setDetectionConfidence((prev) => ({ ...prev, front: faceConfidence }));
+      } else {
+        const lateralEarIdx = 127;
+        let tragusOk = false;
+        if (landmarks[lateralEarIdx]) {
+          const lm = landmarks[lateralEarIdx];
+          setSidePoints((prev) =>
+            prev.map((pt) => (pt.id === "tragus" ? { ...pt, x: parseFloat((lm.x * 100).toFixed(3)), y: parseFloat((lm.y * 100).toFixed(3)) } : pt))
+          );
+          tragusOk = true;
+        }
+
+        let poseResult: any = null;
+        try {
+          poseResult = poseLandmarker.detect(imageRef.current);
+        } catch (poseErr) {
+          console.error("AuraMax ML: Exception during MediaPipe pose detection:", poseErr);
+        }
+
+        const poseLandmarks = poseResult?.landmarks?.[0];
+        let acromionOk = false;
+        if (poseLandmarks) {
+          const leftShoulder = poseLandmarks[11];
+          const rightShoulder = poseLandmarks[12];
+          const chosen =
+            (leftShoulder?.visibility ?? 0) >= (rightShoulder?.visibility ?? 0) ? leftShoulder : rightShoulder;
+          if (chosen && (chosen.visibility ?? 1) > 0.3) {
+            setSidePoints((prev) =>
+              prev.map((pt) => (pt.id === "acromion" ? { ...pt, x: parseFloat((chosen.x * 100).toFixed(3)), y: parseFloat((chosen.y * 100).toFixed(3)) } : pt))
+            );
+            acromionOk = true;
+          }
+        }
+
+        if (!tragusOk || !acromionOk) {
+          fail(
+            !acromionOk
+              ? "Couldn't detect your shoulder in this photo. Retake it with your shoulder visible and well-lit for accurate posture measurement."
+              : "Couldn't detect your ear/tragus position in this photo. Retake it in better lighting."
+          );
           return;
         }
 
-        // Run real MediaPipe Landmarker detection completely in browser with strict safety guard
-        let result = null;
-        try {
-          result = faceLandmarker.detect(imageRef.current);
-        } catch (detectErr) {
-          console.warn("AuraMax ML: Exception during MediaPipe face detection, falling back to calibration:", detectErr);
-        }
-        
-        clearInterval(progressInterval);
-        setScanProgress(100);
-
-        if (result && result.faceLandmarks && result.faceLandmarks.length > 0) {
-          const landmarks = result.faceLandmarks[0]; // 478 points array
-
-          if (activeTab === "front") {
-            const mappings: Record<string, number> = {
-              forehead: 10,
-              nose_tip: 4,
-              chin_tip: 152,
-              l_temple: 127,
-              r_temple: 356,
-              l_eye: 468, // left iris center
-              r_eye: 473, // right iris center
-              l_cheek: 234,
-              r_cheek: 454,
-              l_jaw: 172,
-              r_jaw: 397,
-            };
-
-            setFrontPoints((prev) =>
-              prev.map((pt) => {
-                const idx = mappings[pt.id];
-                if (idx !== undefined && landmarks[idx]) {
-                  const lm = landmarks[idx];
-                  return {
-                    ...pt,
-                    x: parseFloat((lm.x * 100).toFixed(3)),
-                    y: parseFloat((lm.y * 100).toFixed(3)),
-                  };
-                }
-                return pt;
-              })
-            );
-            setHasCalibratedFront(true);
-          } else {
-            // For lateral/side profile, we detect ear tragus (represented approximately near index 127/234)
-            const lateralEarIdx = 127;
-            if (landmarks[lateralEarIdx]) {
-              const lm = landmarks[lateralEarIdx];
-              setSidePoints((prev) =>
-                prev.map((pt) => {
-                  if (pt.id === "tragus") {
-                    return {
-                      ...pt,
-                      x: parseFloat((lm.x * 100).toFixed(3)),
-                      y: parseFloat((lm.y * 100).toFixed(3)),
-                    };
-                  }
-                  return pt;
-                })
-              );
-              setHasCalibratedSide(true);
-            }
-          }
-          console.log("AuraMax ML: Extracted coordinate landmarks and loaded calibrated metrics.");
-        } else {
-          console.warn("AuraMax ML: No face detected. Defaulting to adaptive coordinate shuffling.");
-          applyAdaptiveShuffle();
-        }
-      } else {
-        // Safe UX Fallback if browser is offline or ML load error occurred
-        await new Promise((resolve) => setTimeout(resolve, 600));
-        clearInterval(progressInterval);
-        setScanProgress(100);
-        applyAdaptiveShuffle();
+        setHasCalibratedSide(true);
+        setDetectionConfidence((prev) => ({ ...prev, side: Math.min(faceConfidence, poseLandmarks ? 0.9 : 0.5) }));
       }
     } catch (err) {
-      console.error("AuraMax ML: Scanning execution error, using fallback calibration:", err);
-      clearInterval(progressInterval);
-      setScanProgress(100);
-      applyAdaptiveShuffle();
+      console.error("AuraMax ML: Scanning execution error:", err);
+      fail("An unexpected error occurred while scanning. Please try again.");
+      return;
     } finally {
       setTimeout(() => {
         setIsScanning(false);
@@ -596,28 +687,6 @@ export default function MeshScanner({
           onScanComplete();
         }
       }, 500);
-    }
-  };
-
-  const applyAdaptiveShuffle = () => {
-    if (activeTab === "front") {
-      setFrontPoints((prev) =>
-        prev.map((pt) => ({
-          ...pt,
-          x: parseFloat((pt.x + (Math.random() - 0.5) * 1.5).toFixed(3)),
-          y: parseFloat((pt.y + (Math.random() - 0.5) * 1.5).toFixed(3)),
-        }))
-      );
-      setHasCalibratedFront(true);
-    } else {
-      setSidePoints((prev) =>
-        prev.map((pt) => ({
-          ...pt,
-          x: parseFloat((pt.x + (Math.random() - 0.5) * 1.5).toFixed(3)),
-          y: parseFloat((pt.y + (Math.random() - 0.5) * 1.5).toFixed(3)),
-        }))
-      );
-      setHasCalibratedSide(true);
     }
   };
 
@@ -787,6 +856,20 @@ export default function MeshScanner({
           </button>
         </div>
 
+        {/* Explicit scan-failure banner — replaces the old silent random-jitter fallback */}
+        {scanError && (
+          <div className="mx-3 mt-2 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.08] px-3 py-2 text-[11px] font-mono text-red-300">
+            <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>{scanError}</span>
+          </div>
+        )}
+        {!scanError && qualityWarning && (
+          <div className="mx-3 mt-2 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 text-[11px] font-mono text-amber-300">
+            <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span>{qualityWarning}</span>
+          </div>
+        )}
+
         {/* Scan line effect */}
         {isScanning && (
           <div
@@ -814,7 +897,16 @@ export default function MeshScanner({
                 alt="Upload profile"
                 crossOrigin="anonymous"
                 referrerPolicy="no-referrer"
-                onLoad={updateImageBounds}
+                onLoad={(e) => {
+                  updateImageBounds();
+                  const img = e.currentTarget;
+                  if (img.naturalWidth && img.naturalHeight) {
+                    setNaturalDims((prev) => ({
+                      ...prev,
+                      [activeTab]: { w: img.naturalWidth, h: img.naturalHeight },
+                    }));
+                  }
+                }}
                 className="max-w-full max-h-[380px] sm:max-h-[440px] w-auto h-auto block pointer-events-none rounded-lg border border-white/5"
               />
               

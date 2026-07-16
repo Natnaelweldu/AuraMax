@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { db, HistoricalRecord } from "@/lib/db";
+import { buildRecommendationPayload } from "@/lib/payload";
+import { fetchAuraRecommendations } from "@/lib/services/apiService";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function DashboardPage() {
@@ -25,6 +27,14 @@ export default function DashboardPage() {
   const [session, setSession] = useState<any>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isInitializing, setIsInitializing] = useState(true);
+  // Explicit hydration state, replacing reliance on the bare `isInitializing` boolean alone.
+  // Every action that reads current biometric state (Generate Routine, checklist edits) must
+  // be gated on 'ready' — previously nothing blocked those actions from firing against
+  // default/empty state while the async Supabase+Dexie hydration below was still in flight.
+  const [hydrationState, setHydrationState] = useState<"loading" | "ready" | "error">("loading");
+  // True once we've confirmed the user has at least one real (non-fabricated) historical
+  // record. Replaces the previous silent 5-record mock-data injection.
+  const [hasRealHistory, setHasRealHistory] = useState(false);
 
   // Core biometric state derived from latest scan
   const [currentScore, setCurrentScore] = useState(6.2); // Default fallback: 6.2 out of 10 (62%)
@@ -57,6 +67,7 @@ export default function DashboardPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [generationStep, setGenerationStep] = useState(0);
+  const [lastRoutineSource, setLastRoutineSource] = useState<{ ok: boolean; source: string; reason?: string } | null>(null);
 
   // Historical records for graphing
   const [historicalRecords, setHistoricalRecords] = useState<HistoricalRecord[]>([]);
@@ -153,60 +164,12 @@ export default function DashboardPage() {
         parsedRecords = localHistory;
       }
 
-      // If absolutely no history exists, pre-populate with 5 chronological high-fidelity mock records
-      // so the user receives a fully-featured gorgeous UI right out of the box!
-      if (parsedRecords.length === 0) {
-        const nowMs = Date.now();
-        const baseDayMs = 24 * 60 * 60 * 1000;
-        parsedRecords = [
-          {
-            timestamp: nowMs - 28 * baseDayMs,
-            score: 5.4,
-            asymmetryIndex: 7.12,
-            postureAngle: 18.2,
-            tiltAngle: 18.2,
-            jawHeightRatio: 0.582,
-            subscores: { jawline: 5.2, skin: 6.8, grooming: 7.0, symmetry: 5.5 }
-          },
-          {
-            timestamp: nowMs - 21 * baseDayMs,
-            score: 5.6,
-            asymmetryIndex: 6.80,
-            postureAngle: 16.5,
-            tiltAngle: 16.5,
-            jawHeightRatio: 0.595,
-            subscores: { jawline: 5.6, skin: 7.2, grooming: 7.5, symmetry: 5.9 }
-          },
-          {
-            timestamp: nowMs - 14 * baseDayMs,
-            score: 5.9,
-            asymmetryIndex: 5.20,
-            postureAngle: 15.0,
-            tiltAngle: 15.0,
-            jawHeightRatio: 0.601,
-            subscores: { jawline: 5.9, skin: 7.8, grooming: 7.8, symmetry: 6.5 }
-          },
-          {
-            timestamp: nowMs - 7 * baseDayMs,
-            score: 6.1,
-            asymmetryIndex: 4.60,
-            postureAngle: 14.8,
-            tiltAngle: 14.8,
-            jawHeightRatio: 0.608,
-            subscores: { jawline: 6.1, skin: 8.0, grooming: 8.0, symmetry: 7.0 }
-          },
-          {
-            timestamp: nowMs - 1 * baseDayMs,
-            score: 6.2,
-            asymmetryIndex: 4.25,
-            postureAngle: 14.5,
-            tiltAngle: 14.5,
-            jawHeightRatio: 0.611,
-            subscores: { jawline: 6.2, skin: 8.0, grooming: 8.2, symmetry: 7.1 }
-          }
-        ];
-      }
-
+      // NOTE: previously, if absolutely no history existed, this silently injected 5 fabricated
+      // "high-fidelity mock records" with no flag distinguishing them from real data — so a
+      // broken Supabase connection or first-run empty state looked identical to a real
+      // multi-week trend. We no longer fabricate history. An empty `parsedRecords` is now a
+      // real, honest empty state, surfaced via `hasRealHistory` below.
+      setHasRealHistory(parsedRecords.length > 0);
       setHistoricalRecords(parsedRecords);
 
       // Extract details from latest record
@@ -257,8 +220,10 @@ export default function DashboardPage() {
 
     } catch (err) {
       console.error("Dexie/Supabase synchronization failure on dashboard page:", err);
+      setHydrationState("error");
     } finally {
       setIsInitializing(false);
+      setHydrationState((prev) => (prev === "error" ? prev : "ready"));
     }
   };
 
@@ -288,6 +253,15 @@ export default function DashboardPage() {
 
   // Handler to compile the custom 30-day Kinesiology, Biochemistry, and Geometric Style routines
   const handleGenerateRoutine = async () => {
+    // Previously nothing blocked this from firing while the async Supabase+Dexie hydration
+    // above was still in flight — a user clicking quickly after navigating in could send
+    // default/placeholder state (age=21, asymmetryIndex=4.25, etc.) to Gemini instead of
+    // their real scan. Hydration must be confirmed 'ready' first.
+    if (hydrationState !== "ready") {
+      setGenerationError("Still loading your profile — try again in a moment.");
+      return;
+    }
+
     setIsGenerating(true);
     setGenerationError(null);
     setGenerationStep(0);
@@ -297,88 +271,27 @@ export default function DashboardPage() {
     }, 1500);
 
     try {
-      // Calculate BMI
-      const calculatedBmi = parseFloat((weightKg / ((heightCm / 100) * (heightCm / 100))).toFixed(2)) || 22.8;
-
-      // Construct the exact global request payload schema matching rules in AGENTS.md
-      const payload = {
-        user_metadata: {
-          age: age,
-          gender: "male",
-          body_metrics: {
-            height_cm: heightCm,
-            weight_kg: weightKg,
-            calculated_bmi: calculatedBmi,
-            estimated_body_fat_percentage: 16.2
-          }
-        },
-        craniofacial_geometry: {
-          face_shape_classification: faceShape || "Oval",
-          asymmetry: {
-            raw_index: asymmetryIndex || 4.25,
-            primary_deviation_zone: "balanced",
-            canthal_tilt: "positive"
-          },
-          jaw_and_chin: {
-            structural_type: "Defined/Symmetric",
-            gonial_angle_estimate: 122,
-            submental_fat_storage: "minimal"
-          },
-          facial_proportions: {
-            vertical_thirds_ratio: "1:1.02:0.98",
-            bizygomatic_to_bigonial_ratio: jawHeightRatio || 1.215
-          }
-        },
-        cervicothoracic_posture: {
-          forward_head_posture: {
-            raw_angle_degrees: postureAngle || 14.5,
-            severity_classification: postureAngle < 10 ? "mild" : postureAngle < 18 ? "moderate" : "severe",
-            cervical_spine_strain_index: parseFloat((5.0 + (postureAngle * 0.9)).toFixed(1)) || 26.1
-          },
-          shoulder_girdle: {
-            rounded_shoulders: "minimal",
-            scapular_protraction: "minimal"
-          }
-        },
-        dermatology_and_trichology: {
-          skin_profile: {
-            type: skinCondition || "combination",
-            sebum_production: skinCondition === "oily" ? "high" : skinCondition === "dry" ? "low" : "moderate",
-            active_pathologies: [],
-            scarring_type: "none"
-          },
-          hair_profile: {
-            texture_type: hairTexture || "straight",
-            norwood_scale_rating: 1,
-            density: "medium",
-            growth_direction: "forward"
-          }
-        }
-      };
-
-      // Dispatch directly to the remote recommendations endpoint
-      const response = await fetch("/api/recommendations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`AuraMax core response failed with status: ${response.status}`);
+      // Single source of truth: read the persisted Dexie profile and build the payload via
+      // the one shared function (lib/payload.ts) used by every other call site. This file
+      // previously had its own third independent copy of this payload-construction logic,
+      // with its own divergent cervical_spine_strain_index formula and its own hardcoded
+      // `|| 4.25` / `|| 14.5` fallbacks that silently replaced real falsy values (including a
+      // genuine 0) with fabricated numbers.
+      const profile = await db.profiles.get("current_profile");
+      if (!profile) {
+        throw new Error("No scan profile found yet. Run a scan before generating a routine.");
       }
+      const payload = buildRecommendationPayload(profile, historicalRecords);
 
-      const data = await response.json();
+      const data = await fetchAuraRecommendations(payload);
+      setLastRoutineSource({ ok: data.ok, source: data.source, reason: data.reason });
+
       if (!data || !data.routine) {
         throw new Error("Invalid routine response received from AuraMax biometric engine.");
       }
 
       // Save routine checks to localStorage immediately on generation
       localStorage.setItem("auramax_routine_checks", JSON.stringify([]));
-
-      // Cache calibrated payload in localStorage for pages to access
-      localStorage.setItem("auramax_calibrated_payload", JSON.stringify(payload));
 
       // 1. DATA PERSISTENCE BINDING: Save recommendations inside IndexedDB via Dexie
       await db.metricsRecords.put({
@@ -458,10 +371,10 @@ export default function DashboardPage() {
 
   if (authLoading || isInitializing) {
     return (
-      <div className="min-h-screen bg-[#0d0e12] text-zinc-400 flex flex-col items-center justify-center p-6">
+      <div className="min-h-screen bg-[#15131a] text-zinc-400 flex flex-col items-center justify-center p-6">
         <div className="relative w-16 h-16 mb-4">
-          <div className="absolute inset-0 rounded-full border border-teal-500/10" />
-          <div className="absolute inset-0 rounded-full border border-teal-500 border-t-transparent animate-spin" />
+          <div className="absolute inset-0 rounded-full border border-brass-500/10" />
+          <div className="absolute inset-0 rounded-full border border-brass-500 border-t-transparent animate-spin" />
         </div>
         <p className="font-mono text-xs text-zinc-500 tracking-wider uppercase">HYDRATING_DASHBOARD_MATRIX...</p>
       </div>
@@ -485,11 +398,11 @@ export default function DashboardPage() {
   const ceilingY = 70 + radius * Math.sin(potentialAngleRad);
 
   return (
-    <div className="min-h-screen bg-[#0d0e12] text-zinc-300 antialiased font-sans pb-16 px-4 sm:px-6 lg:px-8 pt-8 relative overflow-hidden select-none">
+    <div className="min-h-screen bg-[#15131a] text-zinc-300 antialiased font-sans pb-16 px-4 sm:px-6 lg:px-8 pt-8 relative overflow-hidden select-none">
       
       {/* Absolute cybernetic grid backdrops */}
-      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-teal-500/[0.03] rounded-full blur-[140px] pointer-events-none" />
-      <div className="absolute bottom-10 left-10 w-[400px] h-[400px] bg-blue-500/[0.02] rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brass-500/[0.03] rounded-full blur-[140px] pointer-events-none" />
+      <div className="absolute bottom-10 left-10 w-[400px] h-[400px] bg-phosphor-500/[0.02] rounded-full blur-[120px] pointer-events-none" />
 
       <div className="max-w-7xl mx-auto flex flex-col gap-6 relative z-10">
 
@@ -497,7 +410,7 @@ export default function DashboardPage() {
         <header className="pb-4 border-b border-white/[0.05] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-brass-400 animate-pulse" />
               <h1 className="font-display font-black text-xl tracking-tight text-white uppercase">
                 Biometric Optimization Hub
               </h1>
@@ -507,9 +420,9 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 font-mono text-[9px] text-zinc-500 bg-[#12141c]/60 border border-white/[0.04] rounded-lg px-3 py-1.5">
+          <div className="flex items-center gap-2 font-mono text-[9px] text-zinc-500 bg-[#1c1a24]/60 border border-white/[0.04] rounded-lg px-3 py-1.5">
             <span>SUBJECT_ID:</span>
-            <span className="text-teal-400 font-bold uppercase">
+            <span className="text-brass-400 font-bold uppercase">
               {session?.user?.email?.split("@")[0] || "AuraUser"}
             </span>
           </div>
@@ -584,8 +497,8 @@ export default function DashboardPage() {
 
         {/* Bypass Active Visual Toast Indicator */}
         {bypassActive && isLocked && (
-          <div className="w-full bg-teal-500/5 border border-teal-500/20 rounded-xl px-4 py-2 flex items-center justify-between text-[10px] font-mono">
-            <span className="text-teal-400 uppercase flex items-center gap-2">
+          <div className="w-full bg-brass-500/5 border border-brass-500/20 rounded-xl px-4 py-2 flex items-center justify-between text-[10px] font-mono">
+            <span className="text-brass-400 uppercase flex items-center gap-2">
               <Unlock className="w-3.5 h-3.5 animate-pulse" />
               DEVELOPER_MODE_BYPASS: Biometric diagnostic scan chamber unlocked for prototyping.
             </span>
@@ -605,15 +518,15 @@ export default function DashboardPage() {
           <div className="lg:col-span-5 flex flex-col gap-6">
             
             {/* MODULE 1: THE HERO STAT */}
-            <div className="bg-[#12141c]/40 border border-white/[0.05] rounded-3xl p-6 flex flex-col justify-between backdrop-blur-xl relative overflow-hidden shadow-2xl flex-1">
+            <div className="bg-[#1c1a24]/40 border border-white/[0.05] rounded-3xl p-6 flex flex-col justify-between backdrop-blur-xl relative overflow-hidden shadow-2xl flex-1">
               {/* Background cybernetic grid details */}
-              <div className="absolute right-0 top-0 w-44 h-44 bg-teal-500/[0.04] rounded-full blur-3xl pointer-events-none" />
-              <div className="absolute -left-12 -bottom-12 w-48 h-48 bg-blue-500/[0.02] rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute right-0 top-0 w-44 h-44 bg-brass-500/[0.04] rounded-full blur-3xl pointer-events-none" />
+              <div className="absolute -left-12 -bottom-12 w-48 h-48 bg-phosphor-500/[0.02] rounded-full blur-3xl pointer-events-none" />
               
               <div>
                 <div className="flex items-center justify-between pb-4 border-b border-white/[0.04] mb-6">
                   <div className="flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-teal-400" />
+                    <Cpu className="w-4 h-4 text-brass-400" />
                     <span className="font-mono text-xs font-semibold tracking-wider text-white">
                       I. OPTIMIZATION_VECTORS
                     </span>
@@ -671,7 +584,7 @@ export default function DashboardPage() {
                         cx={ceilingX}
                         cy={ceilingY}
                         r="4.5"
-                        className="fill-blue-400 stroke-zinc-950 stroke-[1.5] animate-pulse"
+                        className="fill-phosphor-400 stroke-zinc-950 stroke-[1.5] animate-pulse"
                       />
                     </svg>
 
@@ -683,7 +596,7 @@ export default function DashboardPage() {
                       <span className="text-3xl font-display font-black tracking-tighter text-white font-mono leading-tight">
                         {currentPercent}%
                       </span>
-                      <span className="text-[9px] font-mono bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded px-1.5 py-0.5 block mt-0.5">
+                      <span className="text-[9px] font-mono bg-brass-500/10 text-brass-400 border border-brass-500/20 rounded px-1.5 py-0.5 block mt-0.5">
                         +{aestheticDeltaPercent}% DELTA
                       </span>
                     </div>
@@ -693,7 +606,7 @@ export default function DashboardPage() {
                   <div className="flex-1 flex flex-col gap-4 self-center font-mono">
                     <div className="bg-zinc-950/40 border border-white/[0.02] p-3 rounded-xl">
                       <div className="flex items-center gap-1.5 text-zinc-500 text-[9px] uppercase tracking-wider mb-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-teal-400" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-brass-400" />
                         Current Optimization
                       </div>
                       <p className="text-sm font-bold text-zinc-100">{currentPercent}%</p>
@@ -702,7 +615,7 @@ export default function DashboardPage() {
 
                     <div className="bg-zinc-950/40 border border-white/[0.02] p-3 rounded-xl">
                       <div className="flex items-center gap-1.5 text-zinc-500 text-[9px] uppercase tracking-wider mb-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-phosphor-400" />
                         Aesthetic Ceiling
                       </div>
                       <p className="text-sm font-bold text-zinc-100">{potentialPercent}%</p>
@@ -714,22 +627,22 @@ export default function DashboardPage() {
               </div>
 
               <div className="mt-4 pt-4 border-t border-white/[0.04] text-[10px] text-zinc-500 leading-normal font-sans">
-                *The <span className="text-teal-400 font-mono">DELTA</span> represents the biomechanical headroom unlockable via optimized posture, skin lipid synthesis, and facial development habits.
+                *The <span className="text-brass-400 font-mono">DELTA</span> represents the biomechanical headroom unlockable via optimized posture, skin lipid synthesis, and facial development habits.
               </div>
             </div>
 
             {/* PREMIUM HIGH-CONTRAST ACTION BANNER */}
-            <div className="bg-[#12141c]/80 border border-white/[0.08] rounded-3xl p-6 backdrop-blur-xl flex flex-col gap-4 shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-teal-400 via-blue-500 to-indigo-500" />
+            <div className="bg-[#1c1a24]/80 border border-white/[0.08] rounded-3xl p-6 backdrop-blur-xl flex flex-col gap-4 shadow-xl relative overflow-hidden">
+              <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-brass-400 via-phosphor-500 to-indigo-500" />
               
               <div className="flex items-center justify-between pb-3 border-b border-white/[0.04]">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-teal-400 animate-pulse" />
+                  <Sparkles className="w-4 h-4 text-brass-400 animate-pulse" />
                   <h3 className="font-mono text-xs font-semibold tracking-wider text-white">
                     BIO_ROUTINE_SYNTHESIZER
                   </h3>
                 </div>
-                <span className={`font-mono text-[9px] px-2 py-0.5 rounded-full ${hasRoutine ? "bg-teal-500/10 text-teal-400 border border-teal-500/20" : "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"}`}>
+                <span className={`font-mono text-[9px] px-2 py-0.5 rounded-full ${hasRoutine ? "bg-brass-500/10 text-brass-400 border border-brass-500/20" : "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20"}`}>
                   {hasRoutine ? "OPTIMIZATION_ACTIVE" : "AWAITING_GENERATION"}
                 </span>
               </div>
@@ -744,28 +657,42 @@ export default function DashboardPage() {
                 </div>
               )}
 
+              {lastRoutineSource && !lastRoutineSource.ok && (
+                <div className="p-2.5 rounded-lg bg-amber-950/20 border border-amber-500/20 text-amber-400 font-mono text-[9px] tracking-wide leading-relaxed">
+                  RULE-BASED FALLBACK, NOT AI-GENERATED ({lastRoutineSource.source}
+                  {lastRoutineSource.reason ? `: ${lastRoutineSource.reason}` : ""})
+                </div>
+              )}
+
+              {!hasRealHistory && hydrationState === "ready" && (
+                <div className="p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.06] text-zinc-500 font-mono text-[9px] tracking-wide leading-relaxed">
+                  No scans yet — run your first scan for a real, personalized routine instead of generic defaults.
+                </div>
+              )}
+
               <button
                 type="button"
                 onClick={handleGenerateRoutine}
-                disabled={isGenerating}
-                className="w-full bg-gradient-to-r from-teal-400 to-blue-500 text-zinc-950 hover:from-teal-300 hover:to-blue-400 font-mono text-xs font-bold uppercase tracking-wider py-4 px-4 rounded-2xl shadow-[0_0_20px_rgba(20,184,166,0.2)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                disabled={isGenerating || hydrationState !== "ready"}
+                title={hydrationState !== "ready" ? "Still loading your profile..." : undefined}
+                className="w-full bg-gradient-to-r from-brass-400 to-phosphor-500 text-zinc-950 hover:from-brass-300 hover:to-phosphor-400 font-mono text-xs font-bold uppercase tracking-wider py-4 px-4 rounded-2xl shadow-[0_0_20px_rgba(20,184,166,0.2)] hover:scale-[1.01] active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 <Cpu className="w-4 h-4 text-zinc-950" />
-                Generate Optimization Routine
+                {hydrationState !== "ready" ? "Loading Profile..." : "Generate Optimization Routine"}
               </button>
             </div>
 
           </div>
 
           {/* RIGHT BENTO BLOCK (UPPER LAYOUT): MODULE 2: THE FEATURE RATING MATRIX */}
-          <div className="lg:col-span-7 bg-[#12141c]/40 border border-white/[0.05] rounded-3xl p-6 flex flex-col justify-between backdrop-blur-xl relative overflow-hidden shadow-2xl">
+          <div className="lg:col-span-7 bg-[#1c1a24]/40 border border-white/[0.05] rounded-3xl p-6 flex flex-col justify-between backdrop-blur-xl relative overflow-hidden shadow-2xl">
             {/* Background gradients */}
-            <div className="absolute right-10 bottom-0 w-32 h-32 bg-teal-500/[0.02] rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute right-10 bottom-0 w-32 h-32 bg-brass-500/[0.02] rounded-full blur-3xl pointer-events-none" />
             
             <div>
               <div className="flex items-center justify-between pb-4 border-b border-white/[0.04] mb-4">
                 <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-teal-400" />
+                  <Sparkles className="w-4 h-4 text-brass-400" />
                   <span className="font-mono text-xs font-semibold tracking-wider text-white">
                     II. FEATURE_RATING_MATRIX
                   </span>
@@ -798,14 +725,14 @@ export default function DashboardPage() {
                         {jawHeightRatio.toFixed(3)} / 0.650
                       </td>
                       <td className="py-3 text-center">
-                        <span className="inline-block text-[8px] font-bold bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded px-2 py-0.5 uppercase tracking-wider">
+                        <span className="inline-block text-[8px] font-bold bg-brass-500/10 text-brass-400 border border-brass-500/20 rounded px-2 py-0.5 uppercase tracking-wider">
                           Optimized
                         </span>
                       </td>
                       <td className="py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
                           <div className="hidden sm:block w-16 bg-zinc-900 h-1 rounded-full overflow-hidden">
-                            <div className="h-full bg-teal-400" style={{ width: `${jawlineScore * 10}%` }} />
+                            <div className="h-full bg-brass-400" style={{ width: `${jawlineScore * 10}%` }} />
                           </div>
                           <span className="font-bold text-white text-xs">{jawlineScore.toFixed(1)}/10</span>
                         </div>
@@ -822,14 +749,14 @@ export default function DashboardPage() {
                         {skinCondition} Sebum
                       </td>
                       <td className="py-3 text-center">
-                        <span className="inline-block text-[8px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded px-2 py-0.5 uppercase tracking-wider">
+                        <span className="inline-block text-[8px] font-bold bg-phosphor-500/10 text-phosphor-400 border border-phosphor-500/20 rounded px-2 py-0.5 uppercase tracking-wider">
                           Standard
                         </span>
                       </td>
                       <td className="py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
                           <div className="hidden sm:block w-16 bg-zinc-900 h-1 rounded-full overflow-hidden">
-                            <div className="h-full bg-teal-400" style={{ width: `${skinScore * 10}%` }} />
+                            <div className="h-full bg-brass-400" style={{ width: `${skinScore * 10}%` }} />
                           </div>
                           <span className="font-bold text-white text-xs">{skinScore.toFixed(1)}/10</span>
                         </div>
@@ -846,14 +773,14 @@ export default function DashboardPage() {
                         {groomingStyle} Base
                       </td>
                       <td className="py-3 text-center">
-                        <span className="inline-block text-[8px] font-bold bg-teal-500/10 text-teal-400 border border-teal-500/20 rounded px-2 py-0.5 uppercase tracking-wider">
+                        <span className="inline-block text-[8px] font-bold bg-brass-500/10 text-brass-400 border border-brass-500/20 rounded px-2 py-0.5 uppercase tracking-wider">
                           Optimized
                         </span>
                       </td>
                       <td className="py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
                           <div className="hidden sm:block w-16 bg-zinc-900 h-1 rounded-full overflow-hidden">
-                            <div className="h-full bg-teal-400" style={{ width: `${groomingScore * 10}%` }} />
+                            <div className="h-full bg-brass-400" style={{ width: `${groomingScore * 10}%` }} />
                           </div>
                           <span className="font-bold text-white text-xs">{groomingScore.toFixed(1)}/10</span>
                         </div>
@@ -877,7 +804,7 @@ export default function DashboardPage() {
                       <td className="py-3 text-right">
                         <div className="flex items-center justify-end gap-3">
                           <div className="hidden sm:block w-16 bg-zinc-900 h-1 rounded-full overflow-hidden">
-                            <div className="h-full bg-teal-400" style={{ width: `${symmetryScore * 10}%` }} />
+                            <div className="h-full bg-brass-400" style={{ width: `${symmetryScore * 10}%` }} />
                           </div>
                           <span className="font-bold text-white text-xs">{symmetryScore.toFixed(1)}/10</span>
                         </div>
@@ -891,7 +818,7 @@ export default function DashboardPage() {
 
             <div className="mt-4 pt-3.5 border-t border-white/[0.04] flex items-center justify-between text-[10px] text-zinc-500">
               <span className="flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-teal-400" />
+                <Info className="w-3.5 h-3.5 text-brass-400" />
                 Table represents non-redundant baseline measurements.
               </span>
               <span className="font-mono text-zinc-400">METRIC_CALIBRATION_STANDARD_V2</span>
@@ -899,14 +826,14 @@ export default function DashboardPage() {
           </div>
 
           {/* LOWER BENTO BLOCK (FULL WIDTH): MODULE 3: THE VELOCITY PROGRESS CHART */}
-          <div className="lg:col-span-12 bg-[#12141c]/40 border border-white/[0.05] rounded-3xl p-6 backdrop-blur-xl relative overflow-hidden shadow-2xl flex flex-col justify-between">
-            <div className="absolute top-0 right-10 w-48 h-48 bg-teal-500/[0.02] rounded-full blur-3xl pointer-events-none" />
+          <div className="lg:col-span-12 bg-[#1c1a24]/40 border border-white/[0.05] rounded-3xl p-6 backdrop-blur-xl relative overflow-hidden shadow-2xl flex flex-col justify-between">
+            <div className="absolute top-0 right-10 w-48 h-48 bg-brass-500/[0.02] rounded-full blur-3xl pointer-events-none" />
 
             <div>
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-white/[0.04] mb-6">
                 <div>
                   <div className="flex items-center gap-2">
-                    <TrendingUp className="w-4 h-4 text-teal-400" />
+                    <TrendingUp className="w-4 h-4 text-brass-400" />
                     <span className="font-mono text-xs font-semibold tracking-wider text-white uppercase">
                       III. CHRONOLOGICAL_VELOCITY_PROGRESS
                     </span>
@@ -918,11 +845,11 @@ export default function DashboardPage() {
 
                 <div className="flex items-center gap-4 text-[9px] font-mono text-zinc-500">
                   <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-teal-400" />
+                    <span className="w-2 h-2 rounded-full bg-brass-400" />
                     <span>Score Velocity</span>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-blue-400" />
+                    <span className="w-2 h-2 rounded-full bg-phosphor-400" />
                     <span>Historical Events: {historicalRecords.length}</span>
                   </div>
                 </div>
@@ -1047,8 +974,8 @@ export default function DashboardPage() {
                                   r={isHovered ? "3.5" : "2"}
                                   className={`transition-all duration-150 ${
                                     isHovered 
-                                      ? "fill-teal-400 stroke-zinc-950 stroke-[1.5]" 
-                                      : "fill-teal-500"
+                                      ? "fill-brass-400 stroke-zinc-950 stroke-[1.5]" 
+                                      : "fill-brass-500"
                                   }`}
                                 />
                               </g>
@@ -1074,7 +1001,7 @@ export default function DashboardPage() {
                                     minute: "2-digit"
                                   })}
                                 </span>
-                                <span className="text-teal-400 font-bold">
+                                <span className="text-brass-400 font-bold">
                                   {(sorted[hoveredDot].score * 10).toFixed(0)}%
                                 </span>
                               </div>
@@ -1140,11 +1067,11 @@ export default function DashboardPage() {
             <div className="max-w-md w-full text-center flex flex-col items-center gap-6">
               {/* Spinning cybernetic loader */}
               <div className="relative w-24 h-24">
-                <div className="absolute inset-0 rounded-full border-2 border-teal-500/10" />
-                <div className="absolute inset-0 rounded-full border-t-2 border-r-2 border-teal-400 animate-spin" />
-                <div className="absolute inset-4 rounded-full border-2 border-blue-500/10" />
-                <div className="absolute inset-4 rounded-full border-b-2 border-l-2 border-blue-400 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
-                <Cpu className="absolute inset-0 m-auto w-8 h-8 text-teal-400 animate-pulse" />
+                <div className="absolute inset-0 rounded-full border-2 border-brass-500/10" />
+                <div className="absolute inset-0 rounded-full border-t-2 border-r-2 border-brass-400 animate-spin" />
+                <div className="absolute inset-4 rounded-full border-2 border-phosphor-500/10" />
+                <div className="absolute inset-4 rounded-full border-b-2 border-l-2 border-phosphor-400 animate-spin" style={{ animationDirection: 'reverse', animationDuration: '1.5s' }} />
+                <Cpu className="absolute inset-0 m-auto w-8 h-8 text-brass-400 animate-pulse" />
               </div>
 
               <div className="space-y-2">
@@ -1165,7 +1092,7 @@ export default function DashboardPage() {
               {/* Progress Bar simulation */}
               <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden border border-white/[0.02]">
                 <motion.div 
-                  className="h-full bg-gradient-to-r from-teal-400 to-blue-500" 
+                  className="h-full bg-gradient-to-r from-brass-400 to-phosphor-500" 
                   initial={{ width: "0%" }}
                   animate={{ width: `${(generationStep + 1) * 25}%` }}
                   transition={{ duration: 1.5, ease: "easeInOut" }}

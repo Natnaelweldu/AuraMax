@@ -153,7 +153,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: "easeOut" }}
-        className="w-full max-w-md bg-zinc-950/80 backdrop-blur-xl border border-white/[0.06] rounded-2xl p-8 relative shadow-2xl shadow-emerald-950/10 z-10"
+        className="w-full max-w-md bg-graphite-950/80 backdrop-blur-xl border border-white/[0.06] rounded-2xl p-8 relative shadow-2xl shadow-emerald-950/10 z-10"
       >
         {/* Glow corner highlights */}
         <div className="absolute top-0 left-0 w-8 h-[1px] bg-emerald-500/30" />
@@ -184,7 +184,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
               transition={{ duration: 0.2 }}
             >
               {/* Tab Selector */}
-              <div className="flex bg-zinc-900/60 p-1 rounded-lg border border-white/[0.05] mb-6">
+              <div className="flex bg-graphite-900/60 p-1 rounded-lg border border-white/[0.05] mb-6">
                 <button
                   type="button"
                   onClick={() => {
@@ -194,7 +194,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
                   }}
                   className={`flex-1 py-2 text-xs font-mono rounded transition-all uppercase font-semibold ${
                     mode === "signin"
-                      ? "bg-zinc-800 text-emerald-400 border border-white/[0.04] shadow-sm"
+                      ? "bg-graphite-800 text-emerald-400 border border-white/[0.04] shadow-sm"
                       : "text-zinc-500 hover:text-zinc-300"
                   }`}
                 >
@@ -209,7 +209,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
                   }}
                   className={`flex-1 py-2 text-xs font-mono rounded transition-all uppercase font-semibold ${
                     mode === "signup"
-                      ? "bg-zinc-800 text-emerald-400 border border-white/[0.04] shadow-sm"
+                      ? "bg-graphite-800 text-emerald-400 border border-white/[0.04] shadow-sm"
                       : "text-zinc-500 hover:text-zinc-300"
                   }`}
                 >
@@ -256,7 +256,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
                         placeholder="e.g. Jane Doe"
                         value={fullName}
                         onChange={(e) => setFullName(e.target.value)}
-                        className="w-full bg-zinc-900/60 border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
+                        className="w-full bg-graphite-900/60 border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
                       />
                     </div>
                   </div>
@@ -276,7 +276,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
                       placeholder="email@example.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      className="w-full bg-zinc-900/60 border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
+                      className="w-full bg-graphite-900/60 border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
                     />
                   </div>
                 </div>
@@ -297,7 +297,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      className="w-full bg-zinc-900/60 border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
+                      className="w-full bg-graphite-900/60 border border-white/[0.06] rounded-lg pl-9 pr-3 py-2 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-emerald-500/40 transition-colors"
                     />
                   </div>
                 </div>
@@ -305,7 +305,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-zinc-950 font-mono text-xs font-bold uppercase tracking-widest py-3 px-4 rounded-lg shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 active:translate-y-[1px] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2 cursor-pointer"
+                  className="w-full bg-gradient-to-r from-emerald-500 to-brass-500 hover:from-emerald-400 hover:to-brass-400 text-graphite-950 font-mono text-xs font-bold uppercase tracking-widest py-3 px-4 rounded-lg shadow-lg shadow-emerald-500/10 hover:shadow-emerald-500/20 active:translate-y-[1px] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2 cursor-pointer"
                 >
                   {loading ? (
                     <>
@@ -351,7 +351,7 @@ export default function AuthGateway({ onAuthSuccess }: AuthGatewayProps) {
                   type="button"
                   onClick={handleCheckVerification}
                   disabled={loading}
-                  className="w-full bg-zinc-900 hover:bg-zinc-800 border border-white/[0.08] text-emerald-400 font-mono text-xs font-bold uppercase tracking-wider py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2"
+                  className="w-full bg-graphite-900 hover:bg-graphite-800 border border-white/[0.08] text-emerald-400 font-mono text-xs font-bold uppercase tracking-wider py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
                   Check Verification Status

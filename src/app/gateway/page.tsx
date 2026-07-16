@@ -257,10 +257,10 @@ export default function GatewayPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0d0e12] flex flex-col items-center justify-center p-6 select-none">
+      <div className="min-h-screen bg-[#15131a] flex flex-col items-center justify-center p-6 select-none">
         <div className="relative w-16 h-16 mb-4">
-          <div className="absolute inset-0 rounded-full border border-teal-500/10" />
-          <div className="absolute inset-0 rounded-full border border-teal-500 border-t-transparent animate-spin" />
+          <div className="absolute inset-0 rounded-full border border-brass-500/10" />
+          <div className="absolute inset-0 rounded-full border border-brass-500 border-t-transparent animate-spin" />
         </div>
         <p className="font-mono text-xs text-zinc-500 tracking-wider">DECRYPTING_VAULT_CORES...</p>
       </div>
@@ -268,11 +268,11 @@ export default function GatewayPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0d0e12] flex flex-col items-center justify-center px-4 py-12 relative overflow-hidden select-none">
+    <div className="min-h-screen bg-[#15131a] flex flex-col items-center justify-center px-4 py-12 relative overflow-hidden select-none">
       
       {/* Decorative cybernetic background elements */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-teal-500/5 rounded-full blur-[120px] pointer-events-none" />
-      <div className="absolute bottom-1/4 left-1/4 w-[300px] h-[300px] bg-blue-500/[0.03] rounded-full blur-[100px] pointer-events-none" />
+      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-brass-500/5 rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute bottom-1/4 left-1/4 w-[300px] h-[300px] bg-phosphor-500/[0.03] rounded-full blur-[100px] pointer-events-none" />
       
       {/* Matrix overlay lines */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:32px_32px] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_50%,#000_70%,transparent_100%)] pointer-events-none" />
@@ -291,7 +291,7 @@ export default function GatewayPage() {
             setError(null);
             setSuccess(null);
           }}
-          className="text-[10px] font-mono text-accent-mint hover:text-white transition-colors uppercase tracking-wider border border-accent-mint/20 hover:border-accent-mint/50 bg-[#12141c]/40 px-3 py-1.5 rounded-lg backdrop-blur-md cursor-pointer"
+          className="text-[10px] font-mono text-accent-mint hover:text-white transition-colors uppercase tracking-wider border border-accent-mint/20 hover:border-accent-mint/50 bg-[#1c1a24]/40 px-3 py-1.5 rounded-lg backdrop-blur-md cursor-pointer"
         >
           {mode === "onboarding" ? "Access Existing Profile" : "Initialize New Profile"}
         </button>
@@ -305,7 +305,7 @@ export default function GatewayPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
             transition={{ duration: 0.4, ease: "easeOut" }}
-            className="w-full max-w-xl bg-[#12141c]/60 backdrop-blur-xl border border-white/[0.05] rounded-2xl p-8 relative shadow-2xl z-10"
+            className="w-full max-w-xl bg-[#1c1a24]/60 backdrop-blur-xl border border-white/[0.05] rounded-2xl p-8 relative shadow-2xl z-10"
           >
             {/* Glow corner highlights */}
             <div className="absolute top-0 left-0 w-8 h-[1px] bg-gradient-to-r from-accent-mint to-transparent" />
@@ -376,7 +376,7 @@ export default function GatewayPage() {
                         placeholder="subject@auramax.matrix"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                        className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
                       />
                     </div>
                   </div>
@@ -395,7 +395,7 @@ export default function GatewayPage() {
                         placeholder="••••••••"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                        className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
                       />
                     </div>
                   </div>
@@ -414,7 +414,7 @@ export default function GatewayPage() {
                         placeholder="e.g. ALPHA-9-SECURE"
                         value={securityKeyphrase}
                         onChange={(e) => setSecurityKeyphrase(e.target.value)}
-                        className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                        className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
                       />
                     </div>
                     <p className="text-[10px] text-zinc-600 font-mono mt-1">
@@ -442,7 +442,7 @@ export default function GatewayPage() {
                         max="100"
                         value={age}
                         onChange={(e) => setAge(Number(e.target.value))}
-                        className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-200 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                        className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-200 focus:outline-none focus:border-accent-mint/40 transition-colors"
                       />
                     </div>
 
@@ -453,12 +453,12 @@ export default function GatewayPage() {
                       <select
                         value={gender}
                         onChange={(e) => setGender(e.target.value)}
-                        className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-300 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                        className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-300 focus:outline-none focus:border-accent-mint/40 transition-colors"
                       >
-                        <option value="Masculine" className="bg-[#12141c]">Masculine</option>
-                        <option value="Feminine" className="bg-[#12141c]">Feminine</option>
-                        <option value="Androgynous" className="bg-[#12141c]">Androgynous</option>
-                        <option value="Neutral" className="bg-[#12141c]">Neutral</option>
+                        <option value="Masculine" className="bg-[#1c1a24]">Masculine</option>
+                        <option value="Feminine" className="bg-[#1c1a24]">Feminine</option>
+                        <option value="Androgynous" className="bg-[#1c1a24]">Androgynous</option>
+                        <option value="Neutral" className="bg-[#1c1a24]">Neutral</option>
                       </select>
                     </div>
                   </div>
@@ -474,7 +474,7 @@ export default function GatewayPage() {
                         max="250"
                         value={height}
                         onChange={(e) => setHeight(Number(e.target.value))}
-                        className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-200 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                        className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-200 focus:outline-none focus:border-accent-mint/40 transition-colors"
                       />
                     </div>
 
@@ -488,16 +488,16 @@ export default function GatewayPage() {
                         max="250"
                         value={weight}
                         onChange={(e) => setWeight(Number(e.target.value))}
-                        className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-200 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                        className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl px-4 py-3 text-sm font-sans text-zinc-200 focus:outline-none focus:border-accent-mint/40 transition-colors"
                       />
                     </div>
                   </div>
 
                   {/* BMI & Body Fat Computed Chips */}
-                  <div className="p-4 bg-zinc-950/40 border border-white/[0.03] rounded-xl flex items-center justify-around gap-4 shadow-inner mt-4">
+                  <div className="p-4 bg-graphite-950/40 border border-white/[0.03] rounded-xl flex items-center justify-around gap-4 shadow-inner mt-4">
                     <div className="flex flex-col items-center">
                       <div className="text-[9px] font-mono text-zinc-500 uppercase tracking-wider mb-1">Calculated BMI</div>
-                      <div className="text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-accent-mint to-teal-400 drop-shadow-[0_0_10px_rgba(20,184,166,0.15)] font-mono">
+                      <div className="text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-accent-mint to-brass-400 drop-shadow-[0_0_10px_rgba(20,184,166,0.15)] font-mono">
                         {bmi} <span className="text-[10px] text-zinc-500 font-normal">kg/m²</span>
                       </div>
                     </div>
@@ -533,7 +533,7 @@ export default function GatewayPage() {
                           className={`py-2 px-1 text-xs font-mono rounded-lg border text-center uppercase tracking-tighter transition-all cursor-pointer ${
                             biomembraneType === t
                               ? "bg-accent-mint/10 border-accent-mint/40 text-accent-mint shadow-[0_0_12px_rgba(20,184,166,0.1)]"
-                              : "bg-zinc-950/30 border-white/[0.04] text-zinc-400 hover:text-zinc-200"
+                              : "bg-graphite-950/30 border-white/[0.04] text-zinc-400 hover:text-zinc-200"
                           }`}
                         >
                           {t}
@@ -563,11 +563,11 @@ export default function GatewayPage() {
                             className={`py-2.5 px-3 rounded-lg border flex items-center justify-between text-left transition-all cursor-pointer ${
                               isSelected
                                 ? "bg-accent-blue/10 border-accent-blue/30 text-accent-blue shadow-[0_0_12px_rgba(59,130,246,0.08)]"
-                                : "bg-zinc-950/30 border-white/[0.04] text-zinc-400 hover:text-zinc-200"
+                                : "bg-graphite-950/30 border-white/[0.04] text-zinc-400 hover:text-zinc-200"
                             }`}
                           >
                             <span className="text-[11px] font-mono uppercase tracking-tight">{item}</span>
-                            <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? "bg-accent-blue" : "bg-zinc-800"}`} />
+                            <span className={`w-1.5 h-1.5 rounded-full ${isSelected ? "bg-accent-blue" : "bg-graphite-800"}`} />
                           </button>
                         );
                       })}
@@ -594,8 +594,8 @@ export default function GatewayPage() {
                             onClick={() => handleToggleScarring(item)}
                             className={`py-2.5 px-3 rounded-lg border flex items-center justify-between text-left transition-all cursor-pointer ${
                               isSelected
-                                ? "bg-[#12141c] border-white/[0.12] text-zinc-200 shadow-inner"
-                                : "bg-zinc-950/30 border-white/[0.04] text-zinc-500 hover:text-zinc-400"
+                                ? "bg-[#1c1a24] border-white/[0.12] text-zinc-200 shadow-inner"
+                                : "bg-graphite-950/30 border-white/[0.04] text-zinc-500 hover:text-zinc-400"
                             }`}
                           >
                             <span className="text-[11px] font-sans font-medium">{item}</span>
@@ -629,7 +629,7 @@ export default function GatewayPage() {
                           className={`py-3 px-1 text-xs font-mono rounded-xl border text-center uppercase tracking-tight transition-all cursor-pointer ${
                             hairTexture === texture.toLowerCase()
                               ? "bg-accent-mint/10 border-accent-mint/40 text-accent-mint"
-                              : "bg-zinc-950/30 border-white/[0.04] text-zinc-400 hover:text-zinc-200"
+                              : "bg-graphite-950/30 border-white/[0.04] text-zinc-400 hover:text-zinc-200"
                           }`}
                         >
                           {texture}
@@ -639,7 +639,7 @@ export default function GatewayPage() {
                   </div>
 
                   {/* Chronological Age Delta slider */}
-                  <div className="space-y-3 p-4 bg-zinc-950/30 border border-white/[0.03] rounded-xl">
+                  <div className="space-y-3 p-4 bg-graphite-950/30 border border-white/[0.03] rounded-xl">
                     <div className="flex justify-between items-center">
                       <label className="block text-[10px] font-mono text-zinc-400 uppercase tracking-widest">
                         Chronological Age Delta
@@ -655,7 +655,7 @@ export default function GatewayPage() {
                       step="1"
                       value={ageDelta}
                       onChange={(e) => setAgeDelta(Number(e.target.value))}
-                      className="w-full accent-accent-mint bg-zinc-800 h-1.5 rounded-lg appearance-none cursor-pointer"
+                      className="w-full accent-accent-mint bg-graphite-800 h-1.5 rounded-lg appearance-none cursor-pointer"
                     />
                     <div className="flex justify-between text-[9px] font-mono text-zinc-600 uppercase">
                       <span>Younger (Biological)</span>
@@ -685,7 +685,7 @@ export default function GatewayPage() {
                   <button
                     type="button"
                     onClick={handleNextStep}
-                    className="flex items-center gap-1 bg-[#12141c] hover:bg-[#161a24] border border-white/[0.08] text-accent-mint hover:text-white px-5 py-2.5 rounded-xl text-xs font-mono transition-all shadow-[0_0_15px_rgba(20,184,166,0.05)] cursor-pointer ml-auto"
+                    className="flex items-center gap-1 bg-[#1c1a24] hover:bg-[#161a24] border border-white/[0.08] text-accent-mint hover:text-white px-5 py-2.5 rounded-xl text-xs font-mono transition-all shadow-[0_0_15px_rgba(20,184,166,0.05)] cursor-pointer ml-auto"
                   >
                     NEXT
                     <ChevronRight className="w-4 h-4" />
@@ -694,7 +694,7 @@ export default function GatewayPage() {
                   <button
                     type="submit"
                     disabled={submitting}
-                    className="flex items-center gap-1.5 bg-gradient-to-r from-accent-mint to-accent-blue text-zinc-950 hover:from-teal-400 hover:to-blue-400 font-mono text-xs font-bold uppercase tracking-wider px-6 py-2.5 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(20,184,166,0.15)] cursor-pointer ml-auto"
+                    className="flex items-center gap-1.5 bg-gradient-to-r from-accent-mint to-accent-blue text-graphite-950 hover:from-brass-400 hover:to-phosphor-400 font-mono text-xs font-bold uppercase tracking-wider px-6 py-2.5 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_20px_rgba(20,184,166,0.15)] cursor-pointer ml-auto"
                   >
                     {submitting ? (
                       <>
@@ -719,7 +719,7 @@ export default function GatewayPage() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
             transition={{ duration: 0.4, ease: "easeOut" }}
-            className="w-full max-w-md bg-[#12141c]/60 backdrop-blur-xl border border-white/[0.05] rounded-2xl p-8 relative shadow-2xl z-10"
+            className="w-full max-w-md bg-[#1c1a24]/60 backdrop-blur-xl border border-white/[0.05] rounded-2xl p-8 relative shadow-2xl z-10"
           >
             {/* Glow corner highlights */}
             <div className="absolute top-0 left-0 w-8 h-[1px] bg-gradient-to-r from-accent-mint to-transparent" />
@@ -771,7 +771,7 @@ export default function GatewayPage() {
                     placeholder="subject@auramax.matrix"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                    className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
                   />
                 </div>
               </div>
@@ -790,7 +790,7 @@ export default function GatewayPage() {
                     placeholder="••••••••"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
-                    className="w-full bg-zinc-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
+                    className="w-full bg-graphite-950/40 border border-white/[0.06] rounded-xl pl-10 pr-4 py-3 text-sm font-sans text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-accent-mint/40 transition-colors"
                   />
                 </div>
               </div>
@@ -798,7 +798,7 @@ export default function GatewayPage() {
               <button
                 type="submit"
                 disabled={submitting}
-                className="w-full bg-gradient-to-r from-accent-mint to-accent-blue text-zinc-950 hover:from-teal-400 hover:to-blue-400 font-mono text-xs font-bold uppercase tracking-wider py-3.5 px-4 rounded-xl shadow-[0_0_20px_rgba(20,184,166,0.15)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-4 cursor-pointer"
+                className="w-full bg-gradient-to-r from-accent-mint to-accent-blue text-graphite-950 hover:from-brass-400 hover:to-phosphor-400 font-mono text-xs font-bold uppercase tracking-wider py-3.5 px-4 rounded-xl shadow-[0_0_20px_rgba(20,184,166,0.15)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-4 cursor-pointer"
               >
                 {submitting ? (
                   <>

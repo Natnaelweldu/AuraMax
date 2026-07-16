@@ -19,10 +19,13 @@ import {
   TrendingUp,
   Brain,
   Award,
-  Zap
+  Zap,
+  AlertTriangle
 } from "lucide-react";
 import { supabase } from "@/lib/supabaseClient";
 import { db, HistoricalRecord } from "@/lib/db";
+import { buildRecommendationPayload } from "@/lib/payload";
+import { fetchAuraRecommendations } from "@/lib/services/apiService";
 import { motion, AnimatePresence } from "framer-motion";
 
 interface Routine {
@@ -55,6 +58,7 @@ export default function BlueprintPage() {
   const [isInitializing, setIsInitializing] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [lastSource, setLastSource] = useState<{ ok: boolean; source: string; reason?: string } | null>(null);
 
   // States required for recommendations request
   const [faceShape, setFaceShape] = useState("Oval");
@@ -254,102 +258,19 @@ export default function BlueprintPage() {
     setErrorMsg(null);
 
     try {
-      // 1. HARVEST REAL STATE: Retrieve the calibrated payload from LocalStorage
-      const savedPayload = typeof window !== "undefined" ? window.localStorage.getItem("auramax_calibrated_payload") : null;
-      let payload: any = null;
-
-      if (savedPayload) {
-        try {
-          payload = JSON.parse(savedPayload);
-        } catch (e) {
-          console.warn("Failed to parse cached payload from localStorage", e);
-        }
+      // Single source of truth: read the persisted Dexie profile and build the request
+      // payload via the one shared function (lib/payload.ts) used by every call site —
+      // this file previously had its own independent copy of this logic (reading
+      // localStorage, with its own hardcoded fallback defaults) that could silently
+      // diverge from what MeshScanner/scanner page actually measured.
+      const profile = await db.profiles.get("current_profile");
+      if (!profile) {
+        throw new Error("No scan profile found yet. Run a scan before generating a routine.");
       }
+      const payload = buildRecommendationPayload(profile, (historicalRecords as any) || []);
 
-      if (!payload) {
-        // Pristine fallback schema conforming exactly to structural requirements
-        payload = {
-          user_metadata: {
-            age: age,
-            gender: "male",
-            body_metrics: {
-              height_cm: 175,
-              weight_kg: 70,
-              calculated_bmi: 22.86,
-              estimated_body_fat_percentage: 16.2
-            }
-          },
-          craniofacial_geometry: {
-            face_shape_classification: faceShape || "Oval",
-            asymmetry: {
-              raw_index: asymmetryIndex || 4.25,
-              primary_deviation_zone: "balanced",
-              canthal_tilt: "positive"
-            },
-            jaw_and_chin: {
-              structural_type: "Defined/Symmetric",
-              gonial_angle_estimate: 122,
-              submental_fat_storage: "minimal"
-            },
-            facial_proportions: {
-              vertical_thirds_ratio: "1:1.02:0.98",
-              bizygomatic_to_bigonial_ratio: 1.215
-            }
-          },
-          cervicothoracic_posture: {
-            forward_head_posture: {
-              raw_angle_degrees: postureAngle || 14.5,
-              severity_classification: "mild",
-              cervical_spine_strain_index: 26.1
-            },
-            shoulder_girdle: {
-              rounded_shoulders: "minimal",
-              scapular_protraction: "minimal"
-            }
-          },
-          dermatology_and_trichology: {
-            skin_profile: {
-              type: skinCondition || "combination",
-              sebum_production: "moderate",
-              active_pathologies: [],
-              scarring_type: "none"
-            },
-            hair_profile: {
-              texture_type: hairTexture || "straight",
-              norwood_scale_rating: 1,
-              density: "medium",
-              growth_direction: "forward"
-            }
-          }
-        };
-      }
-      
-      if (payload && historicalRecords && historicalRecords.length > 0) {
-        payload.historical_scans = historicalRecords.map((r: any) => ({
-          timestamp: r.timestamp,
-          date: new Date(r.timestamp).toISOString(),
-          score: r.score,
-          asymmetry_index: r.asymmetryIndex ?? r.asymmetry_index ?? 4.25,
-          posture_angle: r.postureAngle ?? r.posture_angle ?? 14.5,
-          tilt_angle: r.tiltAngle ?? r.tilt_angle ?? 14.5,
-          jaw_height_ratio: r.jawHeightRatio ?? r.jaw_height_ratio ?? 0.611,
-        }));
-      }
-      
-      // 2. ACTIVE FETCH PIPELINE: POST request to /api/recommendations passing complete metrics payload
-      const response = await fetch("/api/recommendations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error(`AuraMax core response failed with status: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await fetchAuraRecommendations(payload);
+      setLastSource({ ok: data.ok, source: data.source, reason: data.reason });
 
       if (!data || !data.routine) {
         throw new Error("Invalid routine response received from AuraMax biometric engine.");
@@ -424,10 +345,10 @@ export default function BlueprintPage() {
 
   if (authLoading || isInitializing) {
     return (
-      <div className="min-h-screen bg-[#0d0e12] text-zinc-400 flex flex-col items-center justify-center p-6">
+      <div className="min-h-screen bg-[#15131a] text-zinc-400 flex flex-col items-center justify-center p-6">
         <div className="relative w-16 h-16 mb-4">
-          <div className="absolute inset-0 rounded-full border border-teal-500/10" />
-          <div className="absolute inset-0 rounded-full border border-teal-500 border-t-transparent animate-spin" />
+          <div className="absolute inset-0 rounded-full border border-brass-500/10" />
+          <div className="absolute inset-0 rounded-full border border-brass-500 border-t-transparent animate-spin" />
         </div>
         <p className="font-mono text-xs text-zinc-500 tracking-wider uppercase">HYDRATING_BLUEPRINT_MATRIX...</p>
       </div>
@@ -435,11 +356,11 @@ export default function BlueprintPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0d0e12] text-zinc-300 antialiased font-sans pb-16 px-4 sm:px-6 lg:px-8 pt-8 relative overflow-hidden select-none">
+    <div className="min-h-screen bg-[#15131a] text-zinc-300 antialiased font-sans pb-16 px-4 sm:px-6 lg:px-8 pt-8 relative overflow-hidden select-none">
       
       {/* Premium backdrops */}
-      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-teal-500/[0.03] rounded-full blur-[140px] pointer-events-none" />
-      <div className="absolute bottom-10 left-10 w-[400px] h-[400px] bg-blue-500/[0.02] rounded-full blur-[120px] pointer-events-none" />
+      <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brass-500/[0.03] rounded-full blur-[140px] pointer-events-none" />
+      <div className="absolute bottom-10 left-10 w-[400px] h-[400px] bg-phosphor-500/[0.02] rounded-full blur-[120px] pointer-events-none" />
 
       <div className="max-w-7xl mx-auto flex flex-col gap-6 relative z-10">
 
@@ -447,7 +368,7 @@ export default function BlueprintPage() {
         <header className="pb-4 border-b border-white/[0.05] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-brass-400 animate-pulse" />
               <h1 className="font-display font-black text-xl tracking-tight text-white uppercase">
                 AuraMax Routine Implementation Engine
               </h1>
@@ -462,7 +383,7 @@ export default function BlueprintPage() {
               id="generate-blueprint-btn"
               onClick={generateRoutine}
               disabled={isGenerating}
-              className="flex items-center justify-center gap-2 bg-teal-500 hover:bg-teal-400 active:bg-teal-600 text-black disabled:opacity-40 disabled:cursor-not-allowed font-mono text-xs font-bold px-4.5 py-2.5 rounded-xl transition-all shadow-[0_0_20px_rgba(20,185,129,0.15)] cursor-pointer"
+              className="flex items-center justify-center gap-2 bg-brass-500 hover:bg-brass-400 active:bg-brass-600 text-black disabled:opacity-40 disabled:cursor-not-allowed font-mono text-xs font-bold px-4.5 py-2.5 rounded-xl transition-all shadow-[0_0_20px_rgba(20,185,129,0.15)] cursor-pointer"
             >
               {isGenerating ? (
                 <>
@@ -481,27 +402,27 @@ export default function BlueprintPage() {
 
         {/* QUICK METRIC OVERVIEW CARDS */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="bg-[#12141c]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
+          <div className="bg-[#1c1a24]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
             <span className="text-[8px] text-zinc-500 uppercase tracking-wider block mb-1">Face Profile</span>
             <div className="text-sm font-bold text-white uppercase truncate">{faceShape}</div>
-            <div className="text-[9px] text-teal-400/80 mt-1">{hairTexture} base</div>
+            <div className="text-[9px] text-brass-400/80 mt-1">{hairTexture} base</div>
           </div>
-          <div className="bg-[#12141c]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
+          <div className="bg-[#1c1a24]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
             <span className="text-[8px] text-zinc-500 uppercase tracking-wider block mb-1">Face Asymmetry</span>
             <div className="text-sm font-bold text-white">{asymmetryIndex.toFixed(2)}%</div>
             <div className="text-[9px] text-zinc-500 mt-1">Rating: {subscores.symmetry.toFixed(1)}/10</div>
           </div>
-          <div className="bg-[#12141c]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
+          <div className="bg-[#1c1a24]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
             <span className="text-[8px] text-zinc-500 uppercase tracking-wider block mb-1">Cervical Angle</span>
             <div className="text-sm font-bold text-white">{postureAngle.toFixed(1)}°</div>
             <div className="text-[9px] text-zinc-500 mt-1">Strain: {subscores.posture.toFixed(1)}/10</div>
           </div>
-          <div className="bg-[#12141c]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
+          <div className="bg-[#1c1a24]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono">
             <span className="text-[8px] text-zinc-500 uppercase tracking-wider block mb-1">Epidermal Sebum</span>
             <div className="text-sm font-bold text-white uppercase truncate">{skinCondition}</div>
-            <div className="text-[9px] text-teal-400/80 mt-1">Rating: {subscores.skin.toFixed(1)}/10</div>
+            <div className="text-[9px] text-brass-400/80 mt-1">Rating: {subscores.skin.toFixed(1)}/10</div>
           </div>
-          <div className="bg-[#12141c]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono col-span-2 md:col-span-1">
+          <div className="bg-[#1c1a24]/40 border border-white/[0.04] rounded-2xl p-3.5 font-mono col-span-2 md:col-span-1">
             <span className="text-[8px] text-zinc-500 uppercase tracking-wider block mb-1">Grooming Framework</span>
             <div className="text-sm font-bold text-white uppercase truncate">{groomingStyle}</div>
             <div className="text-[9px] text-zinc-500 mt-1">Rating: {subscores.grooming.toFixed(1)}/10</div>
@@ -524,7 +445,7 @@ export default function BlueprintPage() {
             </p>
             <button
               onClick={generateRoutine}
-              className="bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 hover:border-teal-500/50 font-mono text-xs font-semibold py-2 px-5 rounded-xl transition-all cursor-pointer"
+              className="bg-brass-500/10 hover:bg-brass-500/20 text-brass-400 border border-brass-500/30 hover:border-brass-500/50 font-mono text-xs font-semibold py-2 px-5 rounded-xl transition-all cursor-pointer"
             >
               Initialize Synthesis Loop
             </button>
@@ -533,8 +454,8 @@ export default function BlueprintPage() {
 
         {isGenerating && (
           <div className="space-y-6">
-            <div className="p-6 bg-teal-950/20 border border-teal-500/10 rounded-2xl text-center">
-              <p className="font-mono text-xs text-teal-400 animate-pulse uppercase tracking-wider">Compiling Craniofacial & Posture Optimization Matrices...</p>
+            <div className="p-6 bg-brass-950/20 border border-brass-500/10 rounded-2xl text-center">
+              <p className="font-mono text-xs text-brass-400 animate-pulse uppercase tracking-wider">Compiling Craniofacial & Posture Optimization Matrices...</p>
               <p className="text-[10px] text-zinc-500 mt-2 max-w-xs mx-auto leading-relaxed">
                 Applying algorithms to balance {asymmetryIndex}% skeletal deviation, map {skinCondition} biochemistry, and correct the {postureAngle}° cervical angle.
               </p>
@@ -542,14 +463,14 @@ export default function BlueprintPage() {
 
             {/* HIGH-END SKELETON LOADER */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="bg-[#12141c]/20 border border-white/[0.03] p-6 rounded-3xl space-y-4 animate-pulse">
+              <div className="bg-[#1c1a24]/20 border border-white/[0.03] p-6 rounded-3xl space-y-4 animate-pulse">
                 <div className="h-4 bg-zinc-800 rounded w-1/3" />
                 <div className="h-2.5 bg-zinc-900 rounded w-full" />
                 <div className="h-2.5 bg-zinc-900 rounded w-5/6" />
                 <div className="h-10 bg-zinc-900 rounded-xl" />
                 <div className="h-10 bg-zinc-900 rounded-xl" />
               </div>
-              <div className="bg-[#12141c]/20 border border-white/[0.03] p-6 rounded-3xl space-y-4 animate-pulse">
+              <div className="bg-[#1c1a24]/20 border border-white/[0.03] p-6 rounded-3xl space-y-4 animate-pulse">
                 <div className="h-4 bg-zinc-800 rounded w-1/3" />
                 <div className="h-2.5 bg-zinc-900 rounded w-full" />
                 <div className="h-2.5 bg-zinc-900 rounded w-5/6" />
@@ -562,7 +483,16 @@ export default function BlueprintPage() {
 
         {!isGenerating && routine && (
           <div className="flex flex-col gap-6">
-            
+            {lastSource && !lastSource.ok && (
+              <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/25 text-amber-300 font-mono text-[11px] rounded-lg">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>
+                  Showing a rule-based routine, not AI-generated ({lastSource.source}
+                  {lastSource.reason ? `: ${lastSource.reason}` : ""}). Try regenerating in a moment.
+                </span>
+              </div>
+            )}
+
             {/* TAB CONTROLS - HIGH CONTRAST TABBED INTERFACE */}
             <div className="flex overflow-x-auto pb-1 gap-2 border-b border-white/[0.04] scrollbar-none select-none">
               <button
@@ -570,8 +500,8 @@ export default function BlueprintPage() {
                 onClick={() => setActiveTab("kinesiology")}
                 className={`flex items-center gap-2 px-5 py-3 font-mono text-[10px] sm:text-xs uppercase tracking-wider border rounded-t-2xl transition-all shrink-0 cursor-pointer ${
                   activeTab === "kinesiology"
-                    ? "bg-[#12141c] border-white/[0.06] border-b-transparent text-teal-400 font-bold"
-                    : "bg-[#0c0d12] border-transparent text-zinc-500 hover:text-zinc-300"
+                    ? "bg-[#1c1a24] border-white/[0.06] border-b-transparent text-brass-400 font-bold"
+                    : "bg-[#0F0E13] border-transparent text-zinc-500 hover:text-zinc-300"
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
@@ -583,8 +513,8 @@ export default function BlueprintPage() {
                 onClick={() => setActiveTab("biochemistry")}
                 className={`flex items-center gap-2 px-5 py-3 font-mono text-[10px] sm:text-xs uppercase tracking-wider border rounded-t-2xl transition-all shrink-0 cursor-pointer ${
                   activeTab === "biochemistry"
-                    ? "bg-[#12141c] border-white/[0.06] border-b-transparent text-teal-400 font-bold"
-                    : "bg-[#0c0d12] border-transparent text-zinc-500 hover:text-zinc-300"
+                    ? "bg-[#1c1a24] border-white/[0.06] border-b-transparent text-brass-400 font-bold"
+                    : "bg-[#0F0E13] border-transparent text-zinc-500 hover:text-zinc-300"
                 }`}
               >
                 <FlaskConical className="w-3.5 h-3.5" />
@@ -596,8 +526,8 @@ export default function BlueprintPage() {
                 onClick={() => setActiveTab("grooming")}
                 className={`flex items-center gap-2 px-5 py-3 font-mono text-[10px] sm:text-xs uppercase tracking-wider border rounded-t-2xl transition-all shrink-0 cursor-pointer ${
                   activeTab === "grooming"
-                    ? "bg-[#12141c] border-white/[0.06] border-b-transparent text-teal-400 font-bold"
-                    : "bg-[#0c0d12] border-transparent text-zinc-500 hover:text-zinc-300"
+                    ? "bg-[#1c1a24] border-white/[0.06] border-b-transparent text-brass-400 font-bold"
+                    : "bg-[#0F0E13] border-transparent text-zinc-500 hover:text-zinc-300"
                 }`}
               >
                 <Scissors className="w-3.5 h-3.5" />
@@ -609,8 +539,8 @@ export default function BlueprintPage() {
                 onClick={() => setActiveTab("lifestyle")}
                 className={`flex items-center gap-2 px-5 py-3 font-mono text-[10px] sm:text-xs uppercase tracking-wider border rounded-t-2xl transition-all shrink-0 cursor-pointer ${
                   activeTab === "lifestyle"
-                    ? "bg-[#12141c] border-white/[0.06] border-b-transparent text-teal-400 font-bold"
-                    : "bg-[#0c0d12] border-transparent text-zinc-500 hover:text-zinc-300"
+                    ? "bg-[#1c1a24] border-white/[0.06] border-b-transparent text-brass-400 font-bold"
+                    : "bg-[#0F0E13] border-transparent text-zinc-500 hover:text-zinc-300"
                 }`}
               >
                 <Compass className="w-3.5 h-3.5" />
@@ -619,7 +549,7 @@ export default function BlueprintPage() {
             </div>
 
             {/* TAB CONTENTS */}
-            <div className="bg-[#12141c]/30 border border-white/[0.05] rounded-3xl p-6 shadow-xl min-h-[400px]">
+            <div className="bg-[#1c1a24]/30 border border-white/[0.05] rounded-3xl p-6 shadow-xl min-h-[400px]">
               
               <AnimatePresence mode="wait">
                 
@@ -653,14 +583,14 @@ export default function BlueprintPage() {
                             onClick={() => toggleCheck(id)}
                             className={`group relative p-5 rounded-2xl border cursor-pointer transition-all select-none ${
                               checked
-                                ? "bg-teal-500/[0.02] border-teal-500/35"
-                                : "bg-[#0c0d12]/60 border-white/[0.04] hover:bg-white/[0.01] hover:border-white/[0.08]"
+                                ? "bg-brass-500/[0.02] border-brass-500/35"
+                                : "bg-[#0F0E13]/60 border-white/[0.04] hover:bg-white/[0.01] hover:border-white/[0.08]"
                             }`}
                           >
                             <div className="flex items-start gap-4">
                               <div className="mt-0.5 shrink-0">
                                 {checked ? (
-                                  <div className="w-5 h-5 rounded-md bg-teal-500/10 border border-teal-500 text-teal-400 flex items-center justify-center">
+                                  <div className="w-5 h-5 rounded-md bg-brass-500/10 border border-brass-500 text-brass-400 flex items-center justify-center">
                                     <Check className="w-3.5 h-3.5 stroke-[3]" />
                                   </div>
                                 ) : (
@@ -685,11 +615,11 @@ export default function BlueprintPage() {
                                 <div className="flex flex-wrap items-center gap-2 pt-2">
                                   <div className="flex items-center gap-1 font-mono text-[9px] bg-[#07080c] border border-white/[0.04] rounded-lg px-2.5 py-1 text-zinc-300">
                                     <span className="text-zinc-500 uppercase">Frequency:</span>
-                                    <span className="text-teal-400 font-bold">{ex.frequency}</span>
+                                    <span className="text-brass-400 font-bold">{ex.frequency}</span>
                                   </div>
                                   <div className="flex items-center gap-1 font-mono text-[9px] bg-[#07080c] border border-white/[0.04] rounded-lg px-2.5 py-1 text-zinc-300">
                                     <span className="text-zinc-500 uppercase">Volume:</span>
-                                    <span className="text-teal-400 font-bold">{ex.volume}</span>
+                                    <span className="text-brass-400 font-bold">{ex.volume}</span>
                                   </div>
                                   <div className="flex items-center gap-1 font-mono text-[9px] bg-[#07080c] border border-white/[0.04] rounded-lg px-2.5 py-1 text-zinc-300">
                                     <span className="text-zinc-500 uppercase">Objective:</span>
@@ -725,7 +655,7 @@ export default function BlueprintPage() {
                     </div>
 
                     {/* Clinical Log Sheet Layout */}
-                    <div className="border border-white/[0.05] rounded-2xl bg-[#0c0d12]/50 overflow-hidden font-mono text-xs">
+                    <div className="border border-white/[0.05] rounded-2xl bg-[#0F0E13]/50 overflow-hidden font-mono text-xs">
                       
                       {/* Clinical Sheet Header */}
                       <div className="bg-white/[0.02] px-5 py-3 border-b border-white/[0.05] flex justify-between items-center text-[10px] text-zinc-400">
@@ -744,14 +674,14 @@ export default function BlueprintPage() {
                               onClick={() => toggleCheck(id)}
                               className={`p-5 transition-all cursor-pointer select-none ${
                                 checked 
-                                  ? "bg-teal-500/[0.01]" 
+                                  ? "bg-brass-500/[0.01]" 
                                   : "hover:bg-white/[0.01]"
                               }`}
                             >
                               <div className="flex items-start gap-4">
                                 <div className="mt-0.5 shrink-0">
                                   {checked ? (
-                                    <div className="w-4.5 h-4.5 rounded bg-teal-500/10 border border-teal-500 text-teal-400 flex items-center justify-center">
+                                    <div className="w-4.5 h-4.5 rounded bg-brass-500/10 border border-brass-500 text-brass-400 flex items-center justify-center">
                                       <Check className="w-3.5 h-3.5 stroke-[3]" />
                                     </div>
                                   ) : (
@@ -765,7 +695,7 @@ export default function BlueprintPage() {
                                     <h4 className={`text-sm font-bold tracking-tight ${checked ? "text-zinc-500 line-through" : "text-white"}`}>
                                       {act.title}
                                     </h4>
-                                    <span className="text-[8px] bg-teal-500/10 text-teal-400 border border-teal-500/15 rounded-lg px-2 py-0.5 w-max">
+                                    <span className="text-[8px] bg-brass-500/10 text-brass-400 border border-brass-500/15 rounded-lg px-2 py-0.5 w-max">
                                       {act.applicationInstructions}
                                     </span>
                                   </div>
@@ -777,8 +707,8 @@ export default function BlueprintPage() {
                                   </p>
 
                                   {/* Aesthetic Justification Readout Block */}
-                                  <div className="bg-[#07080c] border-l-2 border-teal-500 rounded-r-xl p-3.5 text-zinc-400">
-                                    <span className="text-[9px] font-mono text-teal-400 font-bold block mb-1 tracking-wider uppercase">
+                                  <div className="bg-[#07080c] border-l-2 border-brass-500 rounded-r-xl p-3.5 text-zinc-400">
+                                    <span className="text-[9px] font-mono text-brass-400 font-bold block mb-1 tracking-wider uppercase">
                                       [Aesthetic Justification Readout]
                                     </span>
                                     <p className="text-[11px] leading-relaxed font-sans">
@@ -817,8 +747,8 @@ export default function BlueprintPage() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       
                       {/* Haircut Suggestions */}
-                      <div id="haircut-layout-card" className="bg-[#0c0d12]/60 border border-white/[0.04] rounded-2xl p-5 space-y-3 font-mono">
-                        <div className="flex items-center gap-2 pb-2 border-b border-white/[0.04] text-teal-400">
+                      <div id="haircut-layout-card" className="bg-[#0F0E13]/60 border border-white/[0.04] rounded-2xl p-5 space-y-3 font-mono">
+                        <div className="flex items-center gap-2 pb-2 border-b border-white/[0.04] text-brass-400">
                           <Scissors className="w-4 h-4" />
                           <span className="text-[10px] font-bold uppercase tracking-wider">Haircut Selection</span>
                         </div>
@@ -831,8 +761,8 @@ export default function BlueprintPage() {
                       </div>
 
                       {/* Facial Hair Geometry */}
-                      <div id="beard-layout-card" className="bg-[#0c0d12]/60 border border-white/[0.04] rounded-2xl p-5 space-y-3 font-mono">
-                        <div className="flex items-center gap-2 pb-2 border-b border-white/[0.04] text-teal-400">
+                      <div id="beard-layout-card" className="bg-[#0F0E13]/60 border border-white/[0.04] rounded-2xl p-5 space-y-3 font-mono">
+                        <div className="flex items-center gap-2 pb-2 border-b border-white/[0.04] text-brass-400">
                           <Activity className="w-4 h-4" />
                           <span className="text-[10px] font-bold uppercase tracking-wider">Facial Hair Border</span>
                         </div>
@@ -845,8 +775,8 @@ export default function BlueprintPage() {
                       </div>
 
                       {/* Eyebrow Shaping Maps */}
-                      <div id="eyebrow-layout-card" className="bg-[#0c0d12]/60 border border-white/[0.04] rounded-2xl p-5 space-y-3 font-mono">
-                        <div className="flex items-center gap-2 pb-2 border-b border-white/[0.04] text-teal-400">
+                      <div id="eyebrow-layout-card" className="bg-[#0F0E13]/60 border border-white/[0.04] rounded-2xl p-5 space-y-3 font-mono">
+                        <div className="flex items-center gap-2 pb-2 border-b border-white/[0.04] text-brass-400">
                           <Compass className="w-4 h-4" />
                           <span className="text-[10px] font-bold uppercase tracking-wider">Eyebrow Shaping Path</span>
                         </div>
@@ -861,8 +791,8 @@ export default function BlueprintPage() {
                     </div>
 
                     {/* Holistic Aesthetic Justification block */}
-                    <div id="aesthetic-justification-summary-card" className="bg-[#07080c] border border-teal-500/10 rounded-2xl p-5 font-sans">
-                      <span className="text-[9px] font-mono text-teal-400 font-bold block mb-1.5 uppercase tracking-wider">
+                    <div id="aesthetic-justification-summary-card" className="bg-[#07080c] border border-brass-500/10 rounded-2xl p-5 font-sans">
+                      <span className="text-[9px] font-mono text-brass-400 font-bold block mb-1.5 uppercase tracking-wider">
                         [Geometric Aesthetic Justification Matrix]
                       </span>
                       <p className="text-xs leading-relaxed text-zinc-300">
@@ -903,13 +833,13 @@ export default function BlueprintPage() {
                             onClick={() => toggleCheck(id)}
                             className={`p-5 rounded-2xl border cursor-pointer transition-all select-none flex items-start gap-4 ${
                               checked
-                                ? "bg-teal-500/[0.02] border-teal-500/35"
-                                : "bg-[#0c0d12]/60 border-white/[0.04] hover:bg-white/[0.01]"
+                                ? "bg-brass-500/[0.02] border-brass-500/35"
+                                : "bg-[#0F0E13]/60 border-white/[0.04] hover:bg-white/[0.01]"
                             }`}
                           >
                             <div className="mt-0.5 shrink-0">
                               {checked ? (
-                                <div className="w-4.5 h-4.5 rounded bg-teal-500/10 border border-teal-500 text-teal-400 flex items-center justify-center">
+                                <div className="w-4.5 h-4.5 rounded bg-brass-500/10 border border-brass-500 text-brass-400 flex items-center justify-center">
                                   <Check className="w-3.5 h-3.5 stroke-[3]" />
                                 </div>
                               ) : (
@@ -918,7 +848,7 @@ export default function BlueprintPage() {
                             </div>
 
                             <div className="space-y-1.5 flex-1">
-                              <span className="font-mono text-[8px] text-teal-400 block tracking-widest font-bold uppercase">
+                              <span className="font-mono text-[8px] text-brass-400 block tracking-widest font-bold uppercase">
                                 HABIT_VEC_{idx + 1}
                               </span>
                               <p className={`text-xs leading-relaxed font-sans ${checked ? "text-zinc-500 line-through" : "text-zinc-200"}`}>

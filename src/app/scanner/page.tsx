@@ -97,6 +97,104 @@ export default function ScannerPage() {
   const [savingRecord, setSavingRecord] = useState(false);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
+  // --- Real MediaPipe auto-detect, layered on top of the existing manual drag-to-calibrate flow ---
+  // Manual calibration remains the fallback (per product decision): auto-detect runs first and
+  // populates points from real landmarks; the user can still drag any point to fine-tune, and if
+  // detection fails entirely, manual placement is the only path — but it is never silently
+  // faked as a successful detection.
+  const [faceLandmarker, setFaceLandmarker] = useState<any>(null);
+  const [poseLandmarker, setPoseLandmarker] = useState<any>(null);
+  const [mlLoadingState, setMlLoadingState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [qualityWarning, setQualityWarning] = useState<string | null>(null);
+  const [detectionConfidence, setDetectionConfidence] = useState<{ front: number | null; side: number | null }>({
+    front: null,
+    side: null,
+  });
+  const [hasAutoDetected, setHasAutoDetected] = useState<{ front: boolean; side: boolean }>({
+    front: false,
+    side: false,
+  });
+  const [hasManualCalibration, setHasManualCalibration] = useState<{ front: boolean; side: boolean }>({
+    front: false,
+    side: false,
+  });
+
+  // True pixel dimensions of the loaded photo, captured on <img onLoad>. Required so distance
+  // math operates in real pixel space instead of mixed percentage-of-width / percentage-of-height
+  // units (which are different physical units on any non-square photo).
+  const [naturalDims, setNaturalDims] = useState<{
+    front: { w: number; h: number } | null;
+    side: { w: number; h: number } | null;
+  }>({ front: null, side: null });
+
+  // Actual rendered position/size of the <img> within its container (accounts for
+  // object-contain letterboxing), so point overlays and pointer math both reference the
+  // real visible photo rect rather than the outer container.
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [imgBounds, setImgBounds] = useState({ width: "100%", height: "100%", left: 0, top: 0 });
+  const updateImageBounds = () => {
+    if (!imageRef.current || !containerRef.current) return;
+    const rect = imageRef.current.getBoundingClientRect();
+    const parentRect = containerRef.current.getBoundingClientRect();
+    setImgBounds({
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      left: rect.left - parentRect.left,
+      top: rect.top - parentRect.top,
+    });
+  };
+  useEffect(() => {
+    window.addEventListener("resize", updateImageBounds);
+    return () => window.removeEventListener("resize", updateImageBounds);
+  }, []);
+
+  const MIN_SCAN_DIMENSION_PX = 240;
+  const MAX_YAW_Z_DELTA = 0.06;
+
+  useEffect(() => {
+    let cancelled = false;
+    const initML = async () => {
+      try {
+        setMlLoadingState("loading");
+        const importCDN = new Function("url", "return import(url)");
+        const tasksVision = await importCDN("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/+esm");
+        const vision = await tasksVision.FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
+        );
+        const landmarker = await tasksVision.FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+            delegate: "GPU",
+          },
+          runningMode: "IMAGE",
+          numFaces: 1,
+          outputFaceBlendshapes: true,
+        });
+        const poseModel = await tasksVision.PoseLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+            delegate: "GPU",
+          },
+          runningMode: "IMAGE",
+          numPoses: 1,
+        });
+        if (cancelled) return;
+        setFaceLandmarker(landmarker);
+        setPoseLandmarker(poseModel);
+        setMlLoadingState("ready");
+      } catch (err) {
+        console.error("AuraMax ML: Failed to initialize MediaPipe models:", err);
+        setMlLoadingState("error");
+      }
+    };
+    initML();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Custom multi-mode scan requirements & permission states
   const [scanMode, setScanMode] = useState<"webcam" | "upload">("webcam");
   const [cameraRequested, setCameraRequested] = useState(false);
@@ -436,10 +534,23 @@ export default function ScannerPage() {
     };
   }, [activeTab, isCalibrating, streamActive]);
 
-  // Math-Engine: Calculates real-time telemetry whenever nodes are moved
+  // Math-Engine: Calculates real-time telemetry whenever nodes are moved (by auto-detect or drag)
   useEffect(() => {
     const hasFront = !!frontImage;
     const hasSide = !!sideImage;
+
+    // Convert a percentage-space point into true pixel space using the photo's natural
+    // dimensions, so distances aren't computed by mixing percentage-of-width with
+    // percentage-of-height (different physical units on any non-square photo).
+    const dims = activeTab === "front" ? naturalDims.front : naturalDims.side;
+    const w = dims?.w || 100;
+    const h = dims?.h || 100;
+    const toPx = (pt: { x: number; y: number }) => ({ x: (pt.x / 100) * w, y: (pt.y / 100) * h });
+    const getDistancePx = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+      const pa = toPx(a);
+      const pb = toPx(b);
+      return Math.sqrt(Math.pow(pa.x - pb.x, 2) + Math.pow(pa.y - pb.y, 2));
+    };
 
     if (activeTab === "front") {
       if (!hasFront) {
@@ -461,32 +572,28 @@ export default function ScannerPage() {
       const lJaw = p("l_jaw");
       const rJaw = p("r_jaw");
 
-      // Dimensions & Ratio
-      const faceHeight = Math.abs(chin.y - forehead.y) || 1;
-      const cheekWidth = Math.abs(rCheek.x - lCheek.x) || 1;
-      const jawWidth = Math.abs(rJaw.x - lJaw.x) || 1;
-      const foreheadWidth = Math.abs(rTemple.x - lTemple.x) || 1;
-      const ratio = faceHeight / cheekWidth;
+      // Dimensions & ratio — measured in true pixels
+      const faceHeight = getDistancePx(forehead, chin) || 1;
+      const cheekWidth = getDistancePx(lCheek, rCheek) || 1;
+      const jawWidth = getDistancePx(lJaw, rJaw) || 1;
+
+      // Facial index (Farkas et al. anthropometric convention): face height / bizygomatic
+      // width * 100, with standard boundary bands, refined by jaw-to-cheek ratio.
+      const facialIndex = (faceHeight / cheekWidth) * 100;
       const jawToCheekRatio = jawWidth / cheekWidth;
 
-      // Classification
       let computedShape = "Oval";
-      if (ratio < 1.15) {
+      if (facialIndex < 118) {
         computedShape = "Round";
-      } else if (ratio > 1.35) {
-        computedShape = "Oblong";
-      } else if (jawToCheekRatio > 0.85) {
-        computedShape = "Square";
-      } else if (jawToCheekRatio < 0.75 && foreheadWidth > cheekWidth * 0.9) {
-        computedShape = "Heart";
-      } else if (jawToCheekRatio < 0.75) {
-        computedShape = "Diamond";
+      } else if (facialIndex < 132) {
+        computedShape = jawToCheekRatio > 0.88 ? "Square" : "Heart";
       } else {
-        computedShape = "Oval";
+        computedShape = jawToCheekRatio < 0.78 ? "Diamond" : "Oblong";
       }
       setFaceShape(computedShape);
 
-      // Midline axis (average of forehead, nose, chin)
+      // Midline axis (average of forehead, nose, chin) — horizontal-only, so % units are
+      // internally consistent here (no cross-axis mixing).
       const midlineX = (forehead.x + nose.x + chin.x) / 3;
       const distToMidline = (pt: Point2D) => Math.abs(pt.x - midlineX);
 
@@ -494,8 +601,10 @@ export default function ScannerPage() {
       const eyeDiff = Math.abs(distToMidline(lEye) - distToMidline(rEye));
       const cheekDiff = Math.abs(distToMidline(lCheek) - distToMidline(rCheek));
       const jawDiff = Math.abs(distToMidline(lJaw) - distToMidline(rJaw));
-      
-      const calculatedAsymmetry = parseFloat(((templeDiff + eyeDiff + cheekDiff + jawDiff) * 0.75).toFixed(2)) || 2.01;
+
+      // NOTE: previously fell back to a hardcoded "2.01" via `|| 2.01` whenever the computed
+      // value was falsy — including a genuine 0 (perfect symmetry). A real 0 is now reported as 0.
+      const calculatedAsymmetry = parseFloat(((templeDiff + eyeDiff + cheekDiff + jawDiff) * 0.75).toFixed(2));
       setAsymmetryIndex(calculatedAsymmetry);
 
       const computedJawRatio = parseFloat((jawWidth / faceHeight).toFixed(3));
@@ -510,16 +619,23 @@ export default function ScannerPage() {
       const tragus = p("tragus");
       const acromion = p("acromion");
 
-      // Angle in degrees from tragus to shoulder acromion relative to vertical axis
-      const dx = tragus.x - acromion.x;
-      const dy = acromion.y - tragus.y;
+      const tragusPx = toPx(tragus);
+      const acromionPx = toPx(acromion);
+      const dx = tragusPx.x - acromionPx.x;
+      const dy = acromionPx.y - tragusPx.y;
       const angleRad = Math.atan2(Math.abs(dx), Math.abs(dy || 1));
-      const angleDeg = parseFloat((angleRad * (180 / Math.PI)).toFixed(1)) || 14.5;
-      
+      // Only report a real angle once the shoulder point has actually been placed (auto-detect
+      // or a completed manual drag) — otherwise this previously silently reported "14.5" for an
+      // untouched default point position that was never actually measured.
+      const angleDeg =
+        hasAutoDetected.side || hasManualCalibration.side
+          ? parseFloat((angleRad * (180 / Math.PI)).toFixed(1))
+          : 0;
+
       setPostureAngle(angleDeg);
       setTiltAngle(angleDeg);
     }
-  }, [frontPoints, sidePoints, activeTab, frontImage, sideImage]);
+  }, [frontPoints, sidePoints, activeTab, frontImage, sideImage, naturalDims, hasAutoDetected, hasManualCalibration]);
 
   // Synchronize activeTab and activeRequirement bidirectionally
   useEffect(() => {
@@ -622,6 +738,143 @@ export default function ScannerPage() {
   };
   const currentImage = getCurrentImage();
 
+  // Runs real MediaPipe detection against the currently displayed photo and populates the
+  // corresponding point set. Manual drag remains available afterward (and as the only option
+  // if this fails) to fine-tune or fully override any point.
+  const runAutoDetect = async () => {
+    if (!imageRef.current || !currentImage) {
+      setScanError("No photo loaded to scan.");
+      return;
+    }
+    if (!faceLandmarker || (activeTab === "side" && !poseLandmarker)) {
+      setScanError("The scanning model is still loading. Wait a moment and try again.");
+      return;
+    }
+
+    setIsDetecting(true);
+    setScanError(null);
+    setQualityWarning(null);
+
+    const img = imageRef.current;
+    if (!img.complete) {
+      await new Promise((resolve) => { img.onload = resolve; });
+    }
+    if (!img.complete || img.naturalWidth === 0) {
+      setScanError("Image failed to load fully in the browser. Try re-uploading the photo.");
+      setIsDetecting(false);
+      return;
+    }
+    if (img.naturalWidth < MIN_SCAN_DIMENSION_PX || img.naturalHeight < MIN_SCAN_DIMENSION_PX) {
+      setScanError(
+        `Photo resolution is too low (${img.naturalWidth}x${img.naturalHeight}px). Use a photo at least ${MIN_SCAN_DIMENSION_PX}x${MIN_SCAN_DIMENSION_PX}px for reliable measurements.`
+      );
+      setIsDetecting(false);
+      return;
+    }
+
+    if (activeTab === "front") {
+      setNaturalDims((prev) => ({ ...prev, front: { w: img.naturalWidth, h: img.naturalHeight } }));
+    } else {
+      setNaturalDims((prev) => ({ ...prev, side: { w: img.naturalWidth, h: img.naturalHeight } }));
+    }
+
+    try {
+      let result: any = null;
+      try {
+        result = faceLandmarker.detect(img);
+      } catch (err) {
+        console.error("AuraMax ML: face detection exception:", err);
+      }
+
+      if (!result || !result.faceLandmarks || result.faceLandmarks.length === 0) {
+        setScanError("No face detected in this photo. Retake it with better lighting, or manually place the points below.");
+        setIsDetecting(false);
+        return;
+      }
+
+      const landmarks = result.faceLandmarks[0];
+      const faceConfidence = result.faceBlendshapes?.[0]?.categories?.length ? 0.95 : 0.85;
+
+      if (activeTab === "front") {
+        const mappings: Record<string, number> = {
+          forehead: 10, nose_tip: 4, chin_tip: 152,
+          l_temple: 127, r_temple: 356,
+          l_eye: 468, r_eye: 473,
+          l_cheek: 234, r_cheek: 454,
+          l_jaw: 172, r_jaw: 397,
+        };
+
+        const lT = landmarks[mappings.l_temple];
+        const rT = landmarks[mappings.r_temple];
+        const yawDelta = lT && rT ? Math.abs((lT.z ?? 0) - (rT.z ?? 0)) : 0;
+        if (yawDelta > MAX_YAW_Z_DELTA) {
+          setQualityWarning("Your head appears turned off-axis in this photo — asymmetry readings may be less accurate. A directly frontal photo gives the most reliable result.");
+        }
+
+        setFrontPoints((prev) =>
+          prev.map((pt) => {
+            const idx = mappings[pt.id];
+            if (idx !== undefined && landmarks[idx]) {
+              const lm = landmarks[idx];
+              return { ...pt, x: parseFloat((lm.x * 100).toFixed(3)), y: parseFloat((lm.y * 100).toFixed(3)) };
+            }
+            return pt;
+          })
+        );
+        setHasAutoDetected((prev) => ({ ...prev, front: true }));
+        setDetectionConfidence((prev) => ({ ...prev, front: faceConfidence }));
+      } else {
+        const lateralEarIdx = 127;
+        let tragusOk = false;
+        if (landmarks[lateralEarIdx]) {
+          const lm = landmarks[lateralEarIdx];
+          setSidePoints((prev) =>
+            prev.map((pt) => (pt.id === "tragus" ? { ...pt, x: parseFloat((lm.x * 100).toFixed(3)), y: parseFloat((lm.y * 100).toFixed(3)) } : pt))
+          );
+          tragusOk = true;
+        }
+
+        let poseResult: any = null;
+        try {
+          poseResult = poseLandmarker.detect(img);
+        } catch (err) {
+          console.error("AuraMax ML: pose detection exception:", err);
+        }
+        const poseLandmarks = poseResult?.landmarks?.[0];
+        let acromionOk = false;
+        if (poseLandmarks) {
+          const leftShoulder = poseLandmarks[11];
+          const rightShoulder = poseLandmarks[12];
+          const chosen = (leftShoulder?.visibility ?? 0) >= (rightShoulder?.visibility ?? 0) ? leftShoulder : rightShoulder;
+          if (chosen && (chosen.visibility ?? 1) > 0.3) {
+            setSidePoints((prev) =>
+              prev.map((pt) => (pt.id === "acromion" ? { ...pt, x: parseFloat((chosen.x * 100).toFixed(3)), y: parseFloat((chosen.y * 100).toFixed(3)) } : pt))
+            );
+            acromionOk = true;
+          }
+        }
+
+        if (!tragusOk || !acromionOk) {
+          setScanError(
+            !acromionOk
+              ? "Couldn't detect your shoulder in this photo. Manually place the shoulder point below, or retake with your shoulder clearly visible."
+              : "Couldn't detect your ear/tragus position. Manually place the points below, or retake in better lighting."
+          );
+          setIsDetecting(false);
+          return;
+        }
+
+        setHasAutoDetected((prev) => ({ ...prev, side: true }));
+        setDetectionConfidence((prev) => ({ ...prev, side: Math.min(faceConfidence, poseLandmarks ? 0.9 : 0.5) }));
+      }
+    } catch (err) {
+      console.error("AuraMax ML: auto-detect execution error:", err);
+      setScanError("An unexpected error occurred while scanning. You can manually place the points below.");
+    } finally {
+      setIsDetecting(false);
+    }
+  };
+
   // Pointer event handlers for custom SVG node drag-calibration
   const handlePointerDown = (id: string) => {
     if (!isCalibrating) return;
@@ -629,9 +882,9 @@ export default function ScannerPage() {
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (!draggedPointId || !containerRef.current) return;
+    if (!draggedPointId || !imageRef.current) return;
 
-    const rect = containerRef.current.getBoundingClientRect();
+    const rect = imageRef.current.getBoundingClientRect();
     const rawX = ((e.clientX - rect.left) / rect.width) * 100;
     const rawY = ((e.clientY - rect.top) / rect.height) * 100;
 
@@ -643,10 +896,12 @@ export default function ScannerPage() {
       setFrontPoints(prev =>
         prev.map(pt => pt.id === draggedPointId ? { ...pt, x: constrainedX, y: constrainedY } : pt)
       );
+      setHasManualCalibration((prev) => ({ ...prev, front: true }));
     } else {
       setSidePoints(prev =>
         prev.map(pt => pt.id === draggedPointId ? { ...pt, x: constrainedX, y: constrainedY } : pt)
       );
+      setHasManualCalibration((prev) => ({ ...prev, side: true }));
     }
   };
 
@@ -690,7 +945,7 @@ export default function ScannerPage() {
       const rawSymmetry = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - asymmetryIndex * 0.45)).toFixed(1));
       const rawJawline = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - Math.abs(jawHeightRatio - 0.65) * 12)).toFixed(1));
       const rawPosture = parseFloat(Math.min(10.0, Math.max(1.0, 10.0 - tiltAngle * 0.4)).toFixed(1));
-      
+
       let rawSkin = 8.0;
       if (skinCondition === "congested") rawSkin = 6.2;
       else if (skinCondition === "oily") rawSkin = 7.2;
@@ -704,67 +959,45 @@ export default function ScannerPage() {
 
       const score = parseFloat(((rawJawline + rawSkin + rawGrooming + rawSymmetry + rawPosture) / 5).toFixed(1));
 
-      // Construct global request payload schema matching rules in AGENTS.md
-      const payload = {
-        user_metadata: {
-          age: age,
-          gender: "male",
-          body_metrics: {
-            height_cm: heightCm,
-            weight_kg: weightKg,
-            calculated_bmi: parseFloat((weightKg / ((heightCm / 100) * (heightCm / 100))).toFixed(2)) || 22.8,
-            estimated_body_fat_percentage: 16.2
-          }
-        },
-        craniofacial_geometry: {
-          face_shape_classification: faceShape || "Oval",
-          asymmetry: {
-            raw_index: asymmetryIndex || 4.25,
-            primary_deviation_zone: "balanced",
-            canthal_tilt: "positive"
-          },
-          jaw_and_chin: {
-            structural_type: "Defined/Symmetric",
-            gonial_angle_estimate: 122,
-            submental_fat_storage: "minimal"
-          },
-          facial_proportions: {
-            vertical_thirds_ratio: "1:1.02:0.98",
-            bizygomatic_to_bigonial_ratio: jawHeightRatio || 1.215
-          }
-        },
-        cervicothoracic_posture: {
-          forward_head_posture: {
-            raw_angle_degrees: postureAngle || 14.5,
-            severity_classification: postureAngle < 10 ? "mild" : postureAngle < 18 ? "moderate" : "severe",
-            cervical_spine_strain_index: estimatedCervicalForce || 26.1
-          },
-          shoulder_girdle: {
-            rounded_shoulders: "minimal",
-            scapular_protraction: "minimal"
-          }
-        },
-        dermatology_and_trichology: {
-          skin_profile: {
-            type: skinCondition || "combination",
-            sebum_production: skinCondition === "oily" ? "high" : skinCondition === "dry" ? "low" : "moderate",
-            active_pathologies: [],
-            scarring_type: "none"
-          },
-          hair_profile: {
-            texture_type: hairTexture || "straight",
-            norwood_scale_rating: 1,
-            density: "medium",
-            growth_direction: "forward"
-          }
-        }
-      };
+      // NOTE: the Gemini payload is no longer built here. Every call site now derives it from
+      // the persisted BiometricProfile via lib/payload.ts's buildRecommendationPayload — see
+      // dashboard/page.tsx, which builds it fresh from Dexie right before calling the API.
+      // This function's only job is to persist an honest record of what was actually measured
+      // (no more `|| 4.25` / `|| 14.5` fabricated fallbacks masking un-scanned defaults).
 
-      // Cache calibrated payload in localStorage for pages to access
-      localStorage.setItem("auramax_calibrated_payload", JSON.stringify(payload));
+      const profileRecord = {
+        id: "current_profile",
+        frontImage,
+        sideImage,
+        closeupImage,
+        faceShape,
+        asymmetryIndex,
+        postureAngle,
+        tiltAngle,
+        jawHeightRatio,
+        skinCondition,
+        groomingStyle,
+        hairTexture,
+        age,
+        heightCm,
+        weightKg,
+        subscores: {
+          jawline: rawJawline,
+          skin: rawSkin,
+          grooming: rawGrooming,
+          symmetry: rawSymmetry,
+          posture: rawPosture,
+        },
+        currentScore: score,
+        potentialScore: 9.5,
+        routine: null,
+        routineChecks: [],
+        lastUpdated: Date.now(),
+        isFrontCalibrated: hasAutoDetected.front || hasManualCalibration.front,
+        isSideCalibrated: hasAutoDetected.side || hasManualCalibration.side,
+      } as any;
 
-      // 1. DATA PERSISTENCE BINDING: Save raw biometrics inside IndexedDB via Dexie (with empty/null routine)
-      await db.metricsRecords.put({
+      const metricsRecord = {
         id: "latest",
         timestamp: Date.now(),
         faceShape,
@@ -782,40 +1015,30 @@ export default function ScannerPage() {
         },
         routine: null,
         routineChecks: [],
-      });
+      };
 
-      // 2. Dexie current_profile update
-      await db.profiles.put({
-        id: "current_profile",
-        frontImage: frontImage,
-        sideImage: sideImage,
-        closeupImage: closeupImage,
-        faceShape,
+      const historyEntry = {
+        timestamp: Date.now(),
+        score,
         asymmetryIndex,
         postureAngle,
         tiltAngle,
         jawHeightRatio,
-        skinCondition,
-        groomingStyle,
-        hairTexture,
-        age,
-        heightCm,
-        weightKg,
         subscores: {
           jawline: rawJawline,
           skin: rawSkin,
           grooming: rawGrooming,
           symmetry: rawSymmetry,
-          posture: rawPosture
+          posture: rawPosture,
         },
-        currentScore: score,
-        potentialScore: 9.5,
-        routine: null,
-        routineChecks: [],
-        lastUpdated: Date.now(),
-      } as any);
+      };
 
-      // 3. Cloud Database/Supabase sync
+      // Atomic write — previously these were 3 independent sequential .put()/.add() calls with
+      // no transaction, so a failure partway through could desync `profiles` from `history`.
+      await db.saveScanResult(profileRecord, metricsRecord, historyEntry);
+
+      // Cloud sync is best-effort: check and surface the error instead of swallowing it,
+      // but don't block the local save (which already succeeded) on it.
       if (session?.user?.id) {
         const scanData = {
           user_id: session.user.id,
@@ -829,35 +1052,23 @@ export default function ScannerPage() {
           hair_texture: hairTexture,
           age: age,
           score: score,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
         };
-        await supabase.from("biometric_scans").insert([scanData]);
+        const { error: supabaseError } = await supabase.from("biometric_scans").insert([scanData]);
+        if (supabaseError) {
+          // Local data is safely saved either way — this only affects cross-device sync —
+          // but the user should know sync didn't happen, not silently lose it.
+          console.error("AuraMax: Supabase cloud sync failed:", supabaseError);
+          setSaveStatus("SAVED LOCALLY — cloud sync failed, this device only for now");
+          setTimeout(() => router.push("/dashboard"), 1600);
+          return;
+        }
       }
 
-      // 4. Dexie history entry for progress trends
-      await db.history.add({
-        timestamp: Date.now(),
-        score: score,
-        asymmetryIndex: asymmetryIndex,
-        postureAngle: postureAngle,
-        tiltAngle: tiltAngle,
-        jawHeightRatio: jawHeightRatio,
-        subscores: {
-          jawline: rawJawline,
-          skin: rawSkin,
-          grooming: rawGrooming,
-          symmetry: rawSymmetry,
-          posture: rawPosture
-        }
-      });
-
       setSaveStatus("SUCCESS: BIOMETRIC_SCAN_COMMITTED");
-      
-      // Redirect to the Dashboard to generate/view routine
       setTimeout(() => {
         router.push("/dashboard");
       }, 1200);
-
     } catch (err: any) {
       console.error(err);
       setSaveStatus(`ERROR: ${err.message || "SYNC_FAILED"}`);
@@ -868,10 +1079,10 @@ export default function ScannerPage() {
 
   if (authLoading || isInitializing) {
     return (
-      <div className="min-h-screen bg-[#0d0e12] text-zinc-400 flex flex-col items-center justify-center p-6">
+      <div className="min-h-screen bg-[#15131a] text-zinc-400 flex flex-col items-center justify-center p-6">
         <div className="relative w-16 h-16 mb-4">
-          <div className="absolute inset-0 rounded-full border border-teal-500/10" />
-          <div className="absolute inset-0 rounded-full border border-teal-500 border-t-transparent animate-spin" />
+          <div className="absolute inset-0 rounded-full border border-brass-500/10" />
+          <div className="absolute inset-0 rounded-full border border-brass-500 border-t-transparent animate-spin" />
         </div>
         <p className="font-mono text-xs text-zinc-500 tracking-wider">SECURE_CHAMBER_LOAD...</p>
       </div>
@@ -978,7 +1189,7 @@ export default function ScannerPage() {
   const activePoints = activeTab === "front" ? frontPoints : sidePoints;
 
   return (
-    <div className="min-h-screen bg-[#0d0e12] text-zinc-300 antialiased font-sans pb-16 px-4 sm:px-6 lg:px-8 pt-8 relative overflow-hidden">
+    <div className="min-h-screen bg-[#15131a] text-zinc-300 antialiased font-sans pb-16 px-4 sm:px-6 lg:px-8 pt-8 relative overflow-hidden">
       
       {/* Cybernetic ambient background glow */}
       <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-accent-mint/5 rounded-full blur-[160px] pointer-events-none" />
@@ -1001,7 +1212,7 @@ export default function ScannerPage() {
           </div>
 
           <div className="flex items-center gap-2 font-mono">
-            <span className="text-[10px] text-zinc-500 bg-[#12141c] border border-white/[0.04] px-2.5 py-1 rounded-lg">
+            <span className="text-[10px] text-zinc-500 bg-[#1c1a24] border border-white/[0.04] px-2.5 py-1 rounded-lg">
               CORE_STREAM: <span className={streamActive ? "text-accent-mint" : "text-yellow-500"}>{streamActive ? "LOCAL_WEBCAM_60FPS" : "FALLBACK_VECTOR_SIM"}</span>
             </span>
           </div>
@@ -1014,7 +1225,7 @@ export default function ScannerPage() {
           <div className="flex-1 flex flex-col gap-4 w-full">
             
             {/* Scan Mode Toggle */}
-            <div className="flex bg-[#12141c]/40 border border-white/[0.04] p-1 rounded-xl mb-1.5 backdrop-blur-md">
+            <div className="flex bg-[#1c1a24]/40 border border-white/[0.04] p-1 rounded-xl mb-1.5 backdrop-blur-md">
               <button
                 onClick={() => setScanMode("webcam")}
                 className={`flex-1 py-2 px-4 rounded-lg font-mono text-[10px] font-bold tracking-wider uppercase transition-all flex items-center justify-center gap-2 cursor-pointer ${
@@ -1047,19 +1258,19 @@ export default function ScannerPage() {
                   setActiveRequirement("front");
                   setActiveTab("front");
                 }}
-                className={`bg-[#12141c]/50 p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group ${
+                className={`bg-[#1c1a24]/50 p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group ${
                   activeRequirement === "front" 
-                    ? "border-accent-mint/40 shadow-[0_0_15px_rgba(20,184,166,0.06)] bg-[#12141c]/80" 
+                    ? "border-accent-mint/40 shadow-[0_0_15px_rgba(20,184,166,0.06)] bg-[#1c1a24]/80" 
                     : "border-white/[0.04] hover:border-white/[0.08]"
                 }`}
               >
                 <div className="flex items-center gap-2.5">
                   {frontImage ? (
-                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-accent-mint/30 bg-zinc-950 shrink-0">
+                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-accent-mint/30 bg-graphite-950 shrink-0">
                       <img src={frontImage} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                   ) : (
-                    <div className="w-8 h-8 rounded-lg border border-dashed border-white/[0.1] flex items-center justify-center text-zinc-600 bg-zinc-950 shrink-0">
+                    <div className="w-8 h-8 rounded-lg border border-dashed border-white/[0.1] flex items-center justify-center text-zinc-600 bg-graphite-950 shrink-0">
                       <Camera className="w-3.5 h-3.5" />
                     </div>
                   )}
@@ -1072,7 +1283,7 @@ export default function ScannerPage() {
                   {frontImage ? (
                     <span className="text-[8px] font-mono bg-accent-mint/10 border border-accent-mint/20 text-accent-mint px-1.5 py-0.5 rounded-full">READY</span>
                   ) : (
-                    <span className="text-[8px] font-mono bg-zinc-900 border border-white/[0.04] text-zinc-500 px-1.5 py-0.5 rounded-full">REQ</span>
+                    <span className="text-[8px] font-mono bg-graphite-900 border border-white/[0.04] text-zinc-500 px-1.5 py-0.5 rounded-full">REQ</span>
                   )}
                 </div>
               </div>
@@ -1083,19 +1294,19 @@ export default function ScannerPage() {
                   setActiveRequirement("side");
                   setActiveTab("side");
                 }}
-                className={`bg-[#12141c]/50 p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group ${
+                className={`bg-[#1c1a24]/50 p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group ${
                   activeRequirement === "side" 
-                    ? "border-accent-blue/40 shadow-[0_0_15px_rgba(59,130,246,0.06)] bg-[#12141c]/80" 
+                    ? "border-accent-blue/40 shadow-[0_0_15px_rgba(59,130,246,0.06)] bg-[#1c1a24]/80" 
                     : "border-white/[0.04] hover:border-white/[0.08]"
                 }`}
               >
                 <div className="flex items-center gap-2.5">
                   {sideImage ? (
-                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-accent-blue/30 bg-zinc-950 shrink-0">
+                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-accent-blue/30 bg-graphite-950 shrink-0">
                       <img src={sideImage} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                   ) : (
-                    <div className="w-8 h-8 rounded-lg border border-dashed border-white/[0.1] flex items-center justify-center text-zinc-600 bg-zinc-950 shrink-0">
+                    <div className="w-8 h-8 rounded-lg border border-dashed border-white/[0.1] flex items-center justify-center text-zinc-600 bg-graphite-950 shrink-0">
                       <Camera className="w-3.5 h-3.5" />
                     </div>
                   )}
@@ -1108,7 +1319,7 @@ export default function ScannerPage() {
                   {sideImage ? (
                     <span className="text-[8px] font-mono bg-accent-blue/10 border border-accent-blue/20 text-accent-blue px-1.5 py-0.5 rounded-full">READY</span>
                   ) : (
-                    <span className="text-[8px] font-mono bg-zinc-900 border border-white/[0.04] text-zinc-500 px-1.5 py-0.5 rounded-full">REQ</span>
+                    <span className="text-[8px] font-mono bg-graphite-900 border border-white/[0.04] text-zinc-500 px-1.5 py-0.5 rounded-full">REQ</span>
                   )}
                 </div>
               </div>
@@ -1118,19 +1329,19 @@ export default function ScannerPage() {
                 onClick={() => {
                   setActiveRequirement("closeup");
                 }}
-                className={`bg-[#12141c]/50 p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group ${
+                className={`bg-[#1c1a24]/50 p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between group ${
                   activeRequirement === "closeup" 
-                    ? "border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.06)] bg-[#12141c]/80" 
+                    ? "border-purple-500/40 shadow-[0_0_15px_rgba(168,85,247,0.06)] bg-[#1c1a24]/80" 
                     : "border-white/[0.04] hover:border-white/[0.08]"
                 }`}
               >
                 <div className="flex items-center gap-2.5">
                   {closeupImage ? (
-                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-purple-500/30 bg-zinc-950 shrink-0">
+                    <div className="relative w-8 h-8 rounded-lg overflow-hidden border border-purple-500/30 bg-graphite-950 shrink-0">
                       <img src={closeupImage} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                     </div>
                   ) : (
-                    <div className="w-8 h-8 rounded-lg border border-dashed border-white/[0.1] flex items-center justify-center text-zinc-600 bg-zinc-950 shrink-0">
+                    <div className="w-8 h-8 rounded-lg border border-dashed border-white/[0.1] flex items-center justify-center text-zinc-600 bg-graphite-950 shrink-0">
                       <Camera className="w-3.5 h-3.5" />
                     </div>
                   )}
@@ -1143,12 +1354,28 @@ export default function ScannerPage() {
                   {closeupImage ? (
                     <span className="text-[8px] font-mono bg-purple-500/10 border border-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded-full">READY</span>
                   ) : (
-                    <span className="text-[8px] font-mono bg-zinc-900 border border-white/[0.04] text-zinc-500 px-1.5 py-0.5 rounded-full">REQ</span>
+                    <span className="text-[8px] font-mono bg-graphite-900 border border-white/[0.04] text-zinc-500 px-1.5 py-0.5 rounded-full">REQ</span>
                   )}
                 </div>
               </div>
             </div>
             
+            {/* Explicit auto-detect failure / quality banners — replaces the old silent
+                fabricated-fallback behavior. Manual calibration below remains available
+                regardless of what this shows. */}
+            {scanError && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/[0.08] px-3 py-2 text-[11px] font-mono text-red-300">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>{scanError}</span>
+              </div>
+            )}
+            {!scanError && qualityWarning && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/[0.08] px-3 py-2 text-[11px] font-mono text-amber-300">
+                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>{qualityWarning}</span>
+              </div>
+            )}
+
             {/* THE LIVE CANVAS FRAMEWORK */}
             <div 
               ref={containerRef}
@@ -1159,14 +1386,26 @@ export default function ScannerPage() {
             >
               {/* Floating UNFREEZE_FEED / FREEZE (CALIBRATE_NODES) button inside the viewport container */}
               {activeRequirement !== "closeup" && (
-                <div className="absolute top-4 right-4 z-40 pointer-events-auto">
+                <div className="absolute top-4 right-4 z-40 pointer-events-auto flex items-center gap-2">
+                  {currentImage && (
+                    <button
+                      type="button"
+                      onClick={runAutoDetect}
+                      disabled={isDetecting || mlLoadingState !== "ready"}
+                      title={mlLoadingState !== "ready" ? "Scanning model still loading..." : "Auto-detect landmarks with MediaPipe"}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono tracking-wider border shadow-md transition-all cursor-pointer bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-40 disabled:pointer-events-none"
+                    >
+                      <Sparkles className={`w-3 h-3 ${isDetecting ? "animate-spin" : ""}`} />
+                      {isDetecting ? "DETECTING..." : "AUTO_DETECT"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={toggleCalibrationMode}
                     className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[10px] font-mono tracking-wider border shadow-md transition-all cursor-pointer ${
                       isCalibrating
                         ? "bg-red-500/15 border-red-500/30 text-red-400 hover:bg-red-500/25"
-                        : "bg-zinc-950/80 border-white/[0.08] text-accent-mint hover:bg-zinc-900/90"
+                        : "bg-graphite-950/80 border-white/[0.08] text-accent-mint hover:bg-graphite-900/90"
                     }`}
                   >
                     {isCalibrating ? (
@@ -1196,19 +1435,36 @@ export default function ScannerPage() {
                 />
               )}
 
-              {/* Display Captured or Uploaded Image */}
+              {/* Display Captured or Uploaded Image.
+                  NOTE: previously used object-cover inside a 16:9 container, which crops
+                  portrait face photos — so point coordinates recorded against the container
+                  didn't line up with the actual photo content. Switched to object-contain and
+                  we now track the image's real rendered rect (imgBounds) so overlays and
+                  pointer math both reference the true visible photo, not the outer container. */}
               {currentImage && (
-                <img 
-                  src={currentImage} 
-                  alt="Biometric Capture Target" 
-                  className="absolute inset-0 w-full h-full object-cover opacity-75 z-10 animate-fade-in"
+                <img
+                  ref={imageRef}
+                  src={currentImage}
+                  alt="Biometric Capture Target"
+                  crossOrigin="anonymous"
                   referrerPolicy="no-referrer"
+                  onLoad={(e) => {
+                    updateImageBounds();
+                    const el = e.currentTarget;
+                    if (el.naturalWidth && el.naturalHeight) {
+                      setNaturalDims((prev) => ({
+                        ...prev,
+                        [activeTab]: { w: el.naturalWidth, h: el.naturalHeight },
+                      }));
+                    }
+                  }}
+                  className="absolute inset-0 w-full h-full object-contain z-10 animate-fade-in"
                 />
               )}
 
               {/* Request Camera Permission Overlay */}
               {scanMode === "webcam" && !cameraRequested && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-md p-6 text-center z-20">
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-graphite-950/90 backdrop-blur-md p-6 text-center z-20">
                   <div className="w-14 h-14 rounded-full bg-accent-mint/10 border border-accent-mint/30 flex items-center justify-center mb-4 text-accent-mint shadow-[0_0_15px_rgba(20,184,166,0.15)] animate-pulse">
                     <Camera className="w-6 h-6" />
                   </div>
@@ -1221,7 +1477,7 @@ export default function ScannerPage() {
                   <button
                     type="button"
                     onClick={() => setCameraRequested(true)}
-                    className="bg-gradient-to-r from-accent-mint to-accent-blue text-zinc-950 hover:from-teal-400 hover:to-blue-400 font-mono text-[10px] font-bold uppercase tracking-wider py-2.5 px-5 rounded-lg shadow-[0_0_20px_rgba(20,184,166,0.2)] transition-all cursor-pointer"
+                    className="bg-gradient-to-r from-accent-mint to-accent-blue text-graphite-950 hover:from-brass-400 hover:to-phosphor-400 font-mono text-[10px] font-bold uppercase tracking-wider py-2.5 px-5 rounded-lg shadow-[0_0_20px_rgba(20,184,166,0.2)] transition-all cursor-pointer"
                   >
                     Initialize Webcam Stream
                   </button>
@@ -1268,7 +1524,7 @@ export default function ScannerPage() {
                   <button
                     type="button"
                     onClick={captureSnapshot}
-                    className="bg-gradient-to-r from-accent-mint to-accent-blue text-zinc-950 hover:from-teal-400 hover:to-blue-400 px-5 py-2.5 rounded-lg font-mono text-[9px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-[0_0_20px_rgba(20,184,166,0.3)] cursor-pointer hover:scale-105 active:scale-95 transition-all"
+                    className="bg-gradient-to-r from-accent-mint to-accent-blue text-graphite-950 hover:from-brass-400 hover:to-phosphor-400 px-5 py-2.5 rounded-lg font-mono text-[9px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-[0_0_20px_rgba(20,184,166,0.3)] cursor-pointer hover:scale-105 active:scale-95 transition-all"
                   >
                     <Camera className="w-3.5 h-3.5" />
                     CAPTURE {activeRequirement.toUpperCase()}_SNAPSHOT
@@ -1333,8 +1589,18 @@ export default function ScannerPage() {
                 className="absolute inset-0 w-full h-full object-cover pointer-events-none z-20 mix-blend-screen"
               />
 
-              {/* NODE CALIBRATION INTERACTIVE SVG AND DRAGGABLES */}
-              <div className="absolute inset-0 w-full h-full z-30 pointer-events-none">
+              {/* NODE CALIBRATION INTERACTIVE SVG AND DRAGGABLES — positioned against the real
+                  rendered image rect (imgBounds), not the full container, since object-contain
+                  can letterbox the image within the aspect-video container. */}
+              <div
+                className="absolute z-30 pointer-events-none"
+                style={{
+                  width: imgBounds.width,
+                  height: imgBounds.height,
+                  left: `${imgBounds.left}px`,
+                  top: `${imgBounds.top}px`,
+                }}
+              >
                 {isCalibrating && activeRequirement !== "closeup" && (
                   <>
                     {/* Render active vector networks */}
@@ -1390,7 +1656,7 @@ export default function ScannerPage() {
             </div>
 
             {/* Instruction Callout (Isolated Performance configuration style) */}
-            <div className="bg-[#12141c]/40 border border-white/[0.04] p-3.5 rounded-xl flex gap-3 items-start backdrop-blur-md">
+            <div className="bg-[#1c1a24]/40 border border-white/[0.04] p-3.5 rounded-xl flex gap-3 items-start backdrop-blur-md">
               <Info className="w-4 h-4 text-accent-mint shrink-0 mt-0.5" />
               <div className="space-y-0.5">
                 <h4 className="text-[10px] font-mono text-zinc-300 uppercase tracking-wider">Calibration Instructions</h4>
@@ -1401,7 +1667,7 @@ export default function ScannerPage() {
             </div>
 
             {/* DIAGNOSTIC PROFILE DETAILS FORM */}
-            <div className="bg-[#12141c]/40 border border-white/[0.04] p-4 rounded-xl backdrop-blur-md mt-4">
+            <div className="bg-[#1c1a24]/40 border border-white/[0.04] p-4 rounded-xl backdrop-blur-md mt-4">
               <div className="flex items-center gap-2 pb-2.5 border-b border-white/[0.04] mb-3">
                 <Sliders className="w-3.5 h-3.5 text-accent-mint" />
                 <h4 className="text-[10px] font-mono text-zinc-300 uppercase tracking-wider">
@@ -1425,7 +1691,7 @@ export default function ScannerPage() {
                       setAge(val);
                     }}
                     placeholder="0"
-                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
+                    className="w-full bg-graphite-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
                   />
                 </div>
 
@@ -1444,7 +1710,7 @@ export default function ScannerPage() {
                       setHeightCm(val);
                     }}
                     placeholder="0"
-                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
+                    className="w-full bg-graphite-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
                   />
                 </div>
 
@@ -1463,7 +1729,7 @@ export default function ScannerPage() {
                       setWeightKg(val);
                     }}
                     placeholder="0"
-                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
+                    className="w-full bg-graphite-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 placeholder-zinc-700 outline-none transition-all"
                   />
                 </div>
 
@@ -1475,7 +1741,7 @@ export default function ScannerPage() {
                   <select
                     value={skinCondition || ""}
                     onChange={(e) => setSkinCondition(e.target.value)}
-                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-zinc-950"
+                    className="w-full bg-graphite-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-graphite-950"
                   >
                     <option value="" disabled>Select Skin Type</option>
                     <option value="combination">Combination</option>
@@ -1493,7 +1759,7 @@ export default function ScannerPage() {
                   <select
                     value={groomingStyle || ""}
                     onChange={(e) => setGroomingStyle(e.target.value)}
-                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-zinc-950"
+                    className="w-full bg-graphite-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-graphite-950"
                   >
                     <option value="" disabled>Select Grooming</option>
                     <option value="clean-shaven">Clean Shaven</option>
@@ -1510,7 +1776,7 @@ export default function ScannerPage() {
                   <select
                     value={hairTexture || ""}
                     onChange={(e) => setHairTexture(e.target.value)}
-                    className="w-full bg-zinc-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-zinc-950"
+                    className="w-full bg-graphite-950/60 border border-white/[0.08] focus:border-accent-mint/50 rounded-lg px-2.5 py-1.5 text-[11px] font-mono text-zinc-200 outline-none transition-all [&>option]:bg-graphite-950"
                   >
                     <option value="" disabled>Select Hair Type</option>
                     <option value="straight">Straight</option>
@@ -1528,7 +1794,7 @@ export default function ScannerPage() {
           <div className="w-full md:w-[320px] flex flex-col gap-4 shrink-0">
             
             {/* PRE-SCAN VALIDATION CHECKLIST */}
-            <div className="bg-[#12141c]/80 border border-white/[0.08] rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-4 shadow-xl relative overflow-hidden">
+            <div className="bg-[#1c1a24]/80 border border-white/[0.08] rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-4 shadow-xl relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-[2px] bg-gradient-to-r from-accent-mint via-accent-blue to-purple-500" />
               
               <div className="flex items-center justify-between pb-3 border-b border-white/[0.04]">
@@ -1613,7 +1879,7 @@ export default function ScannerPage() {
             </div>
             
             {/* Live Telemetry Title */}
-            <div className="bg-[#12141c]/60 border border-white/[0.05] rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-4 shadow-xl">
+            <div className="bg-[#1c1a24]/60 border border-white/[0.05] rounded-2xl p-5 backdrop-blur-xl flex flex-col gap-4 shadow-xl">
               <div className="flex items-center gap-2 pb-3 border-b border-white/[0.04]">
                 <Cpu className="w-4 h-4 text-accent-mint" />
                 <h3 className="font-mono text-xs font-semibold tracking-wider text-white">
@@ -1628,7 +1894,7 @@ export default function ScannerPage() {
                   I. Craniofacial Metrics
                 </h4>
 
-                <div className="bg-zinc-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
+                <div className="bg-graphite-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>FACE_SHAPE</span>
                     <span className="text-accent-mint font-bold uppercase text-xs">
@@ -1640,7 +1906,7 @@ export default function ScannerPage() {
                   </p>
                 </div>
 
-                <div className="bg-zinc-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
+                <div className="bg-graphite-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>ASYMMETRY_INDEX</span>
                     <div className="text-right">
@@ -1651,10 +1917,10 @@ export default function ScannerPage() {
                   </div>
                   
                   {/* Custom progress gauge */}
-                  <div className="w-full bg-zinc-900 h-1 rounded-full mb-1.5 overflow-hidden">
+                  <div className="w-full bg-graphite-900 h-1 rounded-full mb-1.5 overflow-hidden">
                     <div 
                       className={`h-full rounded-full transition-all duration-300 ${
-                        frontImage && asymmetryIndex < 4.0 ? "bg-accent-mint" : frontImage && asymmetryIndex < 7.5 ? "bg-yellow-500" : frontImage ? "bg-red-500" : "bg-zinc-800"
+                        frontImage && asymmetryIndex < 4.0 ? "bg-accent-mint" : frontImage && asymmetryIndex < 7.5 ? "bg-yellow-500" : frontImage ? "bg-red-500" : "bg-graphite-800"
                       }`}
                       style={{ width: `${frontImage ? Math.min(100, asymmetryIndex * 8) : 0}%` }}
                     />
@@ -1666,7 +1932,7 @@ export default function ScannerPage() {
                   </div>
                 </div>
 
-                <div className="bg-zinc-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
+                <div className="bg-graphite-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>GONIAL_RATIO</span>
                     <span className="font-mono text-xs text-accent-blue font-bold">
@@ -1687,7 +1953,7 @@ export default function ScannerPage() {
                   II. Posture Align Vectors
                 </h4>
 
-                <div className="bg-zinc-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
+                <div className="bg-graphite-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>FORWARD_TILT</span>
                     <span className="font-mono text-xs text-accent-blue font-bold">
@@ -1699,7 +1965,7 @@ export default function ScannerPage() {
                   </p>
                 </div>
 
-                <div className="bg-zinc-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
+                <div className="bg-graphite-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>CERVICAL_SPINE_FORCE</span>
                     <span className="font-mono text-xs text-red-400 font-bold">
@@ -1708,10 +1974,10 @@ export default function ScannerPage() {
                   </div>
                   
                   {/* Custom load gauge */}
-                  <div className="w-full bg-zinc-900 h-1 rounded-full mb-1.5 overflow-hidden">
+                  <div className="w-full bg-graphite-900 h-1 rounded-full mb-1.5 overflow-hidden">
                     <div 
                       className={`h-full rounded-full transition-all duration-300 ${
-                        sideImage && postureAngle < 10 ? "bg-accent-mint" : sideImage && postureAngle < 18 ? "bg-yellow-500" : sideImage ? "bg-red-500" : "bg-zinc-800"
+                        sideImage && postureAngle < 10 ? "bg-accent-mint" : sideImage && postureAngle < 18 ? "bg-yellow-500" : sideImage ? "bg-red-500" : "bg-graphite-800"
                       }`}
                       style={{ width: `${sideImage ? Math.min(100, (postureAngle / 30) * 100) : 0}%` }}
                     />
@@ -1723,7 +1989,7 @@ export default function ScannerPage() {
                   </div>
                 </div>
 
-                <div className="bg-zinc-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
+                <div className="bg-graphite-950/40 border border-white/[0.02] p-3.5 rounded-xl relative overflow-hidden group">
                   <div className="flex justify-between items-center mb-1 text-[11px] font-mono text-zinc-400">
                     <span>SKELETAL_STRAIN_INDEX</span>
                     <span className="font-mono text-xs text-zinc-300 font-bold">
@@ -1745,8 +2011,8 @@ export default function ScannerPage() {
                   disabled={savingRecord || !isChecklistComplete}
                   className={`w-full font-mono text-[10px] font-bold uppercase tracking-wider py-4 px-4 rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                     isChecklistComplete
-                      ? "bg-gradient-to-r from-accent-mint to-accent-blue text-zinc-950 hover:from-teal-400 hover:to-blue-400 shadow-[0_0_20px_rgba(20,184,166,0.3)] animate-pulse hover:scale-[1.02] active:scale-[0.98]"
-                      : "bg-[#12141c]/60 text-zinc-500 border border-white/[0.04]"
+                      ? "bg-gradient-to-r from-accent-mint to-accent-blue text-graphite-950 hover:from-brass-400 hover:to-phosphor-400 shadow-[0_0_20px_rgba(20,184,166,0.3)] animate-pulse hover:scale-[1.02] active:scale-[0.98]"
+                      : "bg-[#1c1a24]/60 text-zinc-500 border border-white/[0.04]"
                   }`}
                 >
                   {savingRecord ? (
@@ -1761,7 +2027,7 @@ export default function ScannerPage() {
                     </>
                   ) : (
                     <>
-                      <ShieldCheck className="w-3.5 h-3.5 text-zinc-950" />
+                      <ShieldCheck className="w-3.5 h-3.5 text-graphite-950" />
                       EXECUTE_SCAN_&_ASSESSMENT
                     </>
                   )}

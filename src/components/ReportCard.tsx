@@ -156,7 +156,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                   </div>
                   <span className="text-xs font-mono font-semibold text-zinc-100">{jawlineScore}/10</span>
                 </div>
-                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                <div className="h-1 bg-graphite-900 rounded-full overflow-hidden my-1.5">
                   <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${jawlineScore * 10}%` }} />
                 </div>
               </div>
@@ -175,7 +175,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                   </div>
                   <span className="text-xs font-mono font-semibold text-zinc-100">{symmetryScore}/10</span>
                 </div>
-                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                <div className="h-1 bg-graphite-900 rounded-full overflow-hidden my-1.5">
                   <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${symmetryScore * 10}%` }} />
                 </div>
               </div>
@@ -194,7 +194,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                   </div>
                   <span className="text-xs font-mono font-semibold text-zinc-100">{postureScore}/10</span>
                 </div>
-                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                <div className="h-1 bg-graphite-900 rounded-full overflow-hidden my-1.5">
                   <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${postureScore * 10}%` }} />
                 </div>
               </div>
@@ -213,7 +213,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                   </div>
                   <span className="text-xs font-mono font-semibold text-zinc-100">{skinScore}/10</span>
                 </div>
-                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                <div className="h-1 bg-graphite-900 rounded-full overflow-hidden my-1.5">
                   <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${skinScore * 10}%` }} />
                 </div>
               </div>
@@ -232,7 +232,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                   </div>
                   <span className="text-xs font-mono font-semibold text-zinc-100">{groomingScore}/10</span>
                 </div>
-                <div className="h-1 bg-zinc-900 rounded-full overflow-hidden my-1.5">
+                <div className="h-1 bg-graphite-900 rounded-full overflow-hidden my-1.5">
                   <div className="h-full bg-emerald-400 rounded-full" style={{ width: `${groomingScore * 10}%` }} />
                 </div>
               </div>
@@ -264,7 +264,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
                 <span className="text-[10px] font-mono text-zinc-500">{lockCountdown}</span>
                 <button
                   onClick={handleForceUnlock}
-                  className="text-[9px] font-mono bg-zinc-900 border border-white/[0.08] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 px-2 py-1 rounded"
+                  className="text-[9px] font-mono bg-graphite-900 border border-white/[0.08] text-zinc-400 hover:text-zinc-200 hover:bg-graphite-800 px-2 py-1 rounded"
                 >
                   BYPASS_LOCK
                 </button>
@@ -287,7 +287,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
       <div className="md:col-span-5 flex flex-col gap-4">
         
         {/* Dynamic Delta HUD */}
-        <div className="bg-zinc-950 p-5 rounded-xl border border-white/[0.08] relative overflow-hidden flex items-center justify-between">
+        <div className="bg-graphite-950 p-5 rounded-xl border border-white/[0.08] relative overflow-hidden flex items-center justify-between">
           <div className="absolute right-0 top-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
           
           <div>
@@ -342,7 +342,7 @@ export const ReportCard: React.FC<ReportCardProps> = ({
             ) : (
               <div className="space-y-4 mt-2">
                 {/* SVG Chronological Graph */}
-                <div className="w-full h-32 bg-zinc-950/40 rounded border border-white/[0.04] p-2 relative flex flex-col justify-between overflow-hidden">
+                <div className="w-full h-32 bg-graphite-950/40 rounded border border-white/[0.04] p-2 relative flex flex-col justify-between overflow-hidden">
                   {/* Subtle Gridlines */}
                   <div className="absolute inset-x-0 top-1/4 border-b border-white/[0.02] pointer-events-none" />
                   <div className="absolute inset-x-0 top-2/4 border-b border-white/[0.02] pointer-events-none" />

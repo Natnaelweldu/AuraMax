@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Sparkles, CheckSquare, Square, RefreshCw, Layers, Shield, HelpCircle, Activity } from "lucide-react";
+import { Sparkles, CheckSquare, Square, RefreshCw, Layers, Shield, HelpCircle, Activity, AlertTriangle } from "lucide-react";
 import { fetchAuraRecommendations } from "../lib/services/apiService";
 import { dbEngine } from "../lib/db";
+import { buildRecommendationPayload } from "../lib/payload";
 import { supabase } from "../lib/supabaseClient";
 
 interface Routine {
@@ -11,6 +12,9 @@ interface Routine {
     frequency: string;
     volume: string;
     targetMetrics: string;
+    currentValue?: number;
+    targetValue?: number;
+    unit?: string;
   }>;
   dermBiochemistry: Array<{
     title: string;
@@ -78,21 +82,21 @@ const SkeletonLoader: React.FC = () => (
         
         <div className="w-full">
           <div className="flex items-center justify-between mb-5 pb-2 border-b border-white/[0.04]">
-            <div className="h-3.5 w-36 bg-zinc-800 rounded animate-shimmer-bg" />
-            <div className="h-3 w-12 bg-zinc-900 rounded" />
+            <div className="h-3.5 w-36 bg-graphite-800 rounded animate-shimmer-bg" />
+            <div className="h-3 w-12 bg-graphite-900 rounded" />
           </div>
 
           <div className="space-y-4">
             {[1, 2, 3].map((i) => (
               <div key={i} className="p-3.5 bg-black/40 rounded-lg border border-white/[0.02] flex gap-3">
-                <div className="w-4 h-4 bg-zinc-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
+                <div className="w-4 h-4 bg-graphite-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
                 <div className="space-y-2.5 w-full">
-                  <div className="h-3 bg-zinc-800 rounded w-1/2 animate-shimmer-bg" />
+                  <div className="h-3 bg-graphite-800 rounded w-1/2 animate-shimmer-bg" />
                   <div className="space-y-1.5">
-                    <div className="h-2 bg-zinc-900 rounded w-11/12 animate-shimmer-bg" />
-                    <div className="h-2 bg-zinc-900 rounded w-2/3 animate-shimmer-bg" />
+                    <div className="h-2 bg-graphite-900 rounded w-11/12 animate-shimmer-bg" />
+                    <div className="h-2 bg-graphite-900 rounded w-2/3 animate-shimmer-bg" />
                   </div>
-                  <div className="h-3 bg-zinc-950 rounded w-1/3 mt-2" />
+                  <div className="h-3 bg-graphite-950 rounded w-1/3 mt-2" />
                 </div>
               </div>
             ))}
@@ -106,21 +110,21 @@ const SkeletonLoader: React.FC = () => (
         
         <div className="w-full">
           <div className="flex items-center justify-between mb-5 pb-2 border-b border-white/[0.04]">
-            <div className="h-3.5 w-36 bg-zinc-800 rounded animate-shimmer-bg" />
-            <div className="h-3 w-12 bg-zinc-900 rounded" />
+            <div className="h-3.5 w-36 bg-graphite-800 rounded animate-shimmer-bg" />
+            <div className="h-3 w-12 bg-graphite-900 rounded" />
           </div>
 
           <div className="space-y-4">
             {[1, 2].map((i) => (
               <div key={i} className="p-3.5 bg-black/40 rounded-lg border border-white/[0.02] flex gap-3">
-                <div className="w-4 h-4 bg-zinc-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
+                <div className="w-4 h-4 bg-graphite-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
                 <div className="space-y-2.5 w-full">
-                  <div className="h-3 bg-zinc-800 rounded w-3/5 animate-shimmer-bg" />
+                  <div className="h-3 bg-graphite-800 rounded w-3/5 animate-shimmer-bg" />
                   <div className="space-y-1.5">
-                    <div className="h-2 bg-zinc-900 rounded w-full animate-shimmer-bg" />
-                    <div className="h-2 bg-zinc-900 rounded w-4/5 animate-shimmer-bg" />
+                    <div className="h-2 bg-graphite-900 rounded w-full animate-shimmer-bg" />
+                    <div className="h-2 bg-graphite-900 rounded w-4/5 animate-shimmer-bg" />
                   </div>
-                  <div className="h-2.5 bg-zinc-950 rounded w-1/2 mt-1" />
+                  <div className="h-2.5 bg-graphite-950 rounded w-1/2 mt-1" />
                 </div>
               </div>
             ))}
@@ -134,20 +138,20 @@ const SkeletonLoader: React.FC = () => (
         
         <div className="w-full">
           <div className="flex items-center justify-between mb-5 pb-2 border-b border-white/[0.04]">
-            <div className="h-3.5 w-36 bg-zinc-800 rounded animate-shimmer-bg" />
-            <div className="h-3 w-12 bg-zinc-900 rounded" />
+            <div className="h-3.5 w-36 bg-graphite-800 rounded animate-shimmer-bg" />
+            <div className="h-3 w-12 bg-graphite-900 rounded" />
           </div>
 
           <div className="space-y-4">
             {[1, 2, 3].map((i) => (
               <div key={i} className="p-3 bg-black/40 rounded-lg border border-white/[0.02] space-y-1.5">
-                <div className="h-2 w-20 bg-zinc-800 rounded animate-shimmer-bg" />
-                <div className="h-3.5 w-11/12 bg-zinc-900 rounded animate-shimmer-bg" />
+                <div className="h-2 w-20 bg-graphite-800 rounded animate-shimmer-bg" />
+                <div className="h-3.5 w-11/12 bg-graphite-900 rounded animate-shimmer-bg" />
               </div>
             ))}
             <div className="p-3 bg-black/40 rounded-lg border border-white/[0.02] space-y-2">
-              <div className="h-2 w-28 bg-zinc-800 rounded" />
-              <div className="h-2 w-11/12 bg-zinc-900 rounded" />
+              <div className="h-2 w-28 bg-graphite-800 rounded" />
+              <div className="h-2 w-11/12 bg-graphite-900 rounded" />
             </div>
           </div>
         </div>
@@ -159,13 +163,13 @@ const SkeletonLoader: React.FC = () => (
     <div className="relative bg-[#050505] p-5 rounded-xl border border-white/[0.04] overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-emerald-500/[0.02] to-transparent h-16 w-full animate-scan pointer-events-none [animation-delay:2.4s]" />
       
-      <div className="h-3.5 w-48 bg-zinc-800 rounded animate-shimmer-bg mb-4 pb-1 border-b border-white/[0.04]" />
+      <div className="h-3.5 w-48 bg-graphite-800 rounded animate-shimmer-bg mb-4 pb-1 border-b border-white/[0.04]" />
       
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         {[1, 2, 3].map((i) => (
           <div key={i} className="flex items-start gap-2.5 p-3.5 bg-black/40 rounded-lg border border-white/[0.02]">
-            <div className="w-3.5 h-3.5 bg-zinc-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
-            <div className="h-2 bg-zinc-900 rounded w-11/12 animate-shimmer-bg mt-1" />
+            <div className="w-3.5 h-3.5 bg-graphite-800 rounded animate-shimmer-bg shrink-0 mt-0.5" />
+            <div className="h-2 bg-graphite-900 rounded w-11/12 animate-shimmer-bg mt-1" />
           </div>
         ))}
       </div>
@@ -191,108 +195,28 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
 }) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Whether the most recently generated routine was real Gemini output (true) or the static
+  // rule-based fallback (false/null=unknown yet). Surfaced as a visible badge — previously
+  // there was no way for the user to tell these apart.
+  const [lastSource, setLastSource] = useState<{ ok: boolean; source: string; reason?: string } | null>(null);
 
   const generateRoutine = async () => {
     setIsGenerating(true);
     setErrorMsg(null);
 
     try {
-      // 1. HARVEST REAL STATE: Retrieve the calibrated payload from LocalStorage
-      const savedPayload = typeof window !== "undefined" ? window.localStorage.getItem("auramax_calibrated_payload") : null;
-      let payload: any = null;
-
-      if (savedPayload) {
-        try {
-          payload = JSON.parse(savedPayload);
-        } catch (e) {
-          console.warn("Failed to parse cached payload from localStorage", e);
-        }
+      // Single source of truth: read the persisted Dexie profile (not localStorage, which was
+      // one of three divergent payload-construction paths this app previously had) and build
+      // the payload via the one shared function used by every other call site.
+      const profile = await dbEngine.profiles.get("current_profile");
+      if (!profile) {
+        throw new Error("No scan profile found yet. Run a scan before generating a routine.");
       }
 
-      if (!payload) {
-        // Pristine fallback schema conforming exactly to structural requirements
-        payload = {
-          user_metadata: {
-            age: age,
-            gender: "male",
-            body_metrics: {
-              height_cm: 175,
-              weight_kg: 70,
-              calculated_bmi: 22.86,
-              estimated_body_fat_percentage: 16.2
-            }
-          },
-          craniofacial_geometry: {
-            face_shape_classification: faceShape || "Oval",
-            asymmetry: {
-              raw_index: asymmetryIndex || 4.25,
-              primary_deviation_zone: "balanced",
-              canthal_tilt: "positive"
-            },
-            jaw_and_chin: {
-              structural_type: "Defined/Symmetric",
-              gonial_angle_estimate: 122,
-              submental_fat_storage: "minimal"
-            },
-            facial_proportions: {
-              vertical_thirds_ratio: "1:1.02:0.98",
-              bizygomatic_to_bigonial_ratio: 1.215
-            }
-          },
-          cervicothoracic_posture: {
-            forward_head_posture: {
-              raw_angle_degrees: postureAngle || 14.5,
-              severity_classification: "mild",
-              cervical_spine_strain_index: 26.1
-            },
-            shoulder_girdle: {
-              rounded_shoulders: "minimal",
-              scapular_protraction: "minimal"
-            }
-          },
-          dermatology_and_trichology: {
-            skin_profile: {
-              type: skinCondition || "combination",
-              sebum_production: "moderate",
-              active_pathologies: [],
-              scarring_type: "none"
-            },
-            hair_profile: {
-              texture_type: hairTexture || "straight",
-              norwood_scale_rating: 1,
-              density: "medium",
-              growth_direction: "forward"
-            }
-          }
-        };
-      }
-      
-      if (payload && historicalRecords && historicalRecords.length > 0) {
-        payload.historical_scans = historicalRecords.map((r: any) => ({
-          timestamp: r.timestamp,
-          date: new Date(r.timestamp).toISOString(),
-          score: r.score,
-          asymmetry_index: r.asymmetryIndex ?? r.asymmetry_index ?? 4.25,
-          posture_angle: r.postureAngle ?? r.posture_angle ?? 14.5,
-          tilt_angle: r.tiltAngle ?? r.tilt_angle ?? 14.5,
-          jaw_height_ratio: r.jawHeightRatio ?? r.jaw_height_ratio ?? 0.611,
-        }));
-      }
-      
-      // 2. ACTIVE FETCH PIPELINE: POST request to /api/recommendations passing complete metrics payload as JSON string
-      const response = await fetch("/api/recommendations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
+      const payload = buildRecommendationPayload(profile, (historicalRecords as any) || []);
 
-      if (!response.ok) {
-        throw new Error(`AuraMax core response failed with status: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await fetchAuraRecommendations(payload);
+      setLastSource({ ok: data.ok, source: data.source, reason: data.reason });
 
       if (!data || !data.routine) {
         throw new Error("Invalid routine response received from AuraMax biometric engine.");
@@ -428,6 +352,15 @@ export const RoutineBuilder: React.FC<RoutineBuilderProps> = ({
 
       {!isGenerating && routine && (
         <div className="space-y-6">
+          {lastSource && !lastSource.ok && (
+            <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/25 text-amber-300 font-mono text-[11px] rounded-lg">
+              <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+              <span>
+                Showing a rule-based routine, not AI-generated ({lastSource.source}
+                {lastSource.reason ? `: ${lastSource.reason}` : ""}). Try regenerating in a moment.
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             
             {/* COLUMN 1: Structural Kinesiology */}
